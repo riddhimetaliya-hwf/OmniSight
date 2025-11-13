@@ -29,4 +29,5 @@ public class CreateWorkflowFromTemplateRequest
 
     [JsonPropertyName("cronExpression")]
     public string? CronExpression { get; set; } // For recurring schedules
+
 }
