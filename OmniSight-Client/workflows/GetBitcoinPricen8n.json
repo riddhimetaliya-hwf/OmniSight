@@ -1,0 +1,97 @@
+{
+  "name": "Bitcoin Price Alert (Webhook Triggered)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bitcoin-alert"
+      },
+      "id": "webhook-node-id",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+        "options": {}
+      },
+      "id": "http-request-node-id",
+      "name": "Get Bitcoin Price",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [224, 0]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Get bitcoin price from API response\nconst bitcoinData = $json;\nconst price = bitcoinData.bitcoin.usd;\nconst timestamp = new Date().toLocaleString();\n\n// Get data from webhook body\nconst fromEmail = $node[\"Webhook\"].json.body.fromEmail || 'noreply@example.com';\nconst toEmail = $node[\"Webhook\"].json.body.toEmail || 'user@example.com';\nconst subject = $node[\"Webhook\"].json.body.subject || `Bitcoin Price Update - $${price}`;\nconst message = $node[\"Webhook\"].json.body.message || `<h2>Bitcoin Price Update</h2><ul><li>💰 Price: $${price}</li><li>🕐 Time: ${timestamp}</li></ul>`;\n\nreturn [{\n  json: {\n    fromEmail,\n    toEmail,\n    subject,\n    message,\n    price,\n    timestamp\n  }\n}];"
+      },
+      "id": "function-node-id",
+      "name": "Build Email Data",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [448, 0]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.fromEmail }}",
+        "toEmail": "={{ $json.toEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "email-node-id",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [672, 0],
+      "credentials": {
+        "smtp": {
+          "id": "your-smtp-credential-id",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Bitcoin Price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Bitcoin Price": {
+      "main": [
+        [
+          {
+            "node": "Build Email Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Data": {
+      "main": [
+        [
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

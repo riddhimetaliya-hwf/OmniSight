@@ -1,0 +1,99 @@
+{
+  "name": "Bitcoin Price Alert",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "f3f85af9-4546-4654-a91b-eb9919761e9b",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+        "options": {}
+      },
+      "id": "d2291c0d-ee9d-4d08-9a8f-abd9b0a4aff2",
+      "name": "Get Bitcoin Price",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [224, 0]
+    },
+    {
+      "parameters": {
+        "functionCode": "const bitcoinData = $input.item.json;\nconst price = bitcoinData.bitcoin.usd;\nconst timestamp = new Date().toLocaleString();\n\nconst triggerData = $('Manual Trigger').first().json;\nconst fromEmail = triggerData.fromEmail || 'noreply@example.com';\nconst toEmail = triggerData.toEmail || 'user@example.com';\n\nconsole.log('📧 From Email:', fromEmail);\nconsole.log('📧 To Email:', toEmail);\nconsole.log('💰 Bitcoin Price:', price);\n\nif (price > 50000) {\n  return {\n    json: {\n      fromEmail: fromEmail,\n      toEmail: toEmail,\n      subject: \"🚨 BITCOIN PRICE ALERT - $\" + price,\n      message: \"<h2>Bitcoin Price Alert</h2><p>Bitcoin price is currently <strong>HIGH</strong>!</p><ul><li>💰 Price: $\" + price + \"</li><li>📈 Status: ABOVE $50,000</li><li>🕐 Time: \" + timestamp + \"</li></ul><p>Consider monitoring the market closely.</p>\",\n      emailFormat: \"html\",\n      status: \"high_alert\",\n      price: price,\n      timestamp: timestamp\n    }\n  };\n} else {\n  return {\n    json: {\n      fromEmail: fromEmail,\n      toEmail: toEmail,\n      subject: \"📊 Bitcoin Price Update - $\" + price,\n      message: \"<h2>Bitcoin Price Update</h2><p>Bitcoin price is within normal range.</p><ul><li>💰 Price: $\" + price + \"</li><li>📊 Status: BELOW $50,000</li><li>🕐 Time: \" + timestamp + \"</li></ul><p>No immediate action needed.</p>\",\n      emailFormat: \"html\",\n      status: \"normal\",\n      price: price,\n      timestamp: timestamp\n    }\n  };\n}"
+      },
+      "id": "668c3478-13e7-43be-a39a-bcdf155385b6",
+      "name": "Check Price & Create Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [448, 0]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.fromEmail }}",
+        "toEmail": "={{ $json.toEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "51afa00a-5cf5-4141-a1db-e10d3777553c",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [672, 0],
+      "credentials": {
+        "smtp": {
+          "id": "placeholder",
+          "name": "SMTP account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Bitcoin Price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Bitcoin Price": {
+      "main": [
+        [
+          {
+            "node": "Check Price & Create Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Price & Create Message": {
+      "main": [
+        [
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "meta": {
+    "templateCredsSetupCompleted": false
+  },
+  "tags": []
+}

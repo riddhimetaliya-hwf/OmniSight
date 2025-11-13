@@ -1,0 +1,12 @@
+{
+  "endpoints": {
+    "rest": "rest"
+  },
+  "security": {
+    "basicAuth": {
+      "active": true,
+      "user": "riddhi@hybridworkforces.com",
+      "password": "Password1"
+    }
+  }
+}

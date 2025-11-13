@@ -1,0 +1,62 @@
+{
+  "name": "COVID-19 Stats Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hour",
+              "hoursInterval": 24
+            }
+          ]
+        }
+      },
+      "name": "Daily Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://disease.sh/v3/covid-19/all"
+      },
+      "name": "Get COVID Stats",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "const stats = $input.first().json;\nreturn [{\n  subject: `🦠 COVID-19 Update - ${new Date().toLocaleDateString()}`,\n  message: `COVID-19 Global Statistics:\\n\\n` +\n           `😷 Total Cases: ${stats.cases.toLocaleString()}\\n` +\n           `💀 Total Deaths: ${stats.deaths.toLocaleString()}\\n` +\n           `✅ Recovered: ${stats.recovered.toLocaleString()}\\n` +\n           `🏥 Active Cases: ${stats.active.toLocaleString()}\\n` +\n           `🌍 Affected Countries: ${stats.affectedCountries}\\n\\n` +\n           `Stay safe! 🏠`\n}];"
+      },
+      "name": "Format Stats",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "subject": "={{ $json.subject }}",
+        "body": "={{ $json.message }}",
+        "to": "YOUR_EMAIL@example.com"
+      },
+      "name": "Send Stats Email",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Daily Trigger": {
+      "main": [[{ "node": "Get COVID Stats", "type": "main", "index": 0 }]]
+    },
+    "Get COVID Stats": {
+      "main": [[{ "node": "Format Stats", "type": "main", "index": 0 }]]
+    },
+    "Format Stats": {
+      "main": [[{ "node": "Send Stats Email", "type": "main", "index": 0 }]]
+    }
+  }
+}
