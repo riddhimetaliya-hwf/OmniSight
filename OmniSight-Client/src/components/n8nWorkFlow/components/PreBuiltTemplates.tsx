@@ -312,6 +312,18 @@ const determineInputType = (key: string, value: unknown): 'text' | 'email' | 'pa
   return 'text';
 };
 
+// Add this near your other helper functions
+const formatFieldName = (field: string) => {
+  return field
+    .replace(/([A-Z])/g, ' $1')
+    .replace(/^./, str => str.toUpperCase())
+    .replace('Api', 'API')
+    .replace('Url', 'URL')
+    .replace('Smtp', 'SMTP')
+    .replace('_', ' ')
+    .replace('.', ' - ');
+};
+
 // FIXED: Better placeholder generation
 const getPlaceholder = (input: WorkflowInput) => {
   if (input.value && !input.value.startsWith('=') && !input.value.includes('{{')) {
@@ -661,59 +673,57 @@ export const PreBuiltTemplates = () => {
         const result = JSON.parse(responseText);
         console.log('✅ Workflow created:', result);
         
-        if (result.status === "executing" && result.executionId) {
-          const executionId = parseInt(result.executionId);
-          
-          if (!isNaN(executionId)) {
-            alert(
-              `✅ SUCCESS! Workflow Executing Automatically!\n\n` +
-              `📋 Workflow: ${result.workflowName}\n` +
-              `🆔 n8n Workflow ID: ${result.n8nWorkflowId}\n` +
-              `⚡ Execution ID: ${executionId}\n` +
-              `🚀 Status: Running in n8n\n\n` +
-              `🎉 The workflow has been triggered automatically!\n` +
-              `✉️ Check your email inbox for the results.\n` +
-              `📊 You can also monitor progress in the n8n dashboard at http://localhost:5678`
-            );
-            setActiveExecutions(prev => new Set(prev).add(executionId));
-          } else {
-            alert(
-              `✅ Workflow Executing!\n\n` +
-              `📋 Workflow: ${result.workflowName}\n` +
-              `🆔 n8n ID: ${result.n8nWorkflowId}\n` +
-              `🚀 The workflow is running automatically in n8n.\n\n` +
-              `✉️ Check your email inbox for results.`
-            );
-          }
-        } else if (result.status === "saved_but_not_executed") {
-          alert(
-            `⚠️ Workflow Created - Manual Trigger Needed\n\n` +
-            `📋 Workflow: ${result.workflowName}\n` +
-            `🆔 n8n ID: ${result.n8nWorkflowId}\n\n` +
-            `The workflow was created and activated in n8n, but automatic execution didn't trigger.\n\n` +
-            `📌 To execute the workflow:\n` +
-            `1. Open n8n dashboard: http://localhost:5678\n` +
-            `2. Find your workflow: "${result.workflowName}"\n` +
-            `3. Click "Test workflow" or "Execute workflow" button\n\n` +
-            `The workflow is ready and will work - it just needs a manual trigger this first time.`
-          );
-        } else if (result.status === "created_without_n8n") {
-          alert(
-            `⚠️ Workflow Saved to Database Only\n\n` +
-            `📋 Workflow: ${result.workflowName}\n\n` +
-            `n8n is currently unavailable. The workflow was saved to the database.\n` +
-            `Please ensure n8n is running at http://localhost:5678 and try again.`
-          );
-        } else {
-          alert(
-            `✅ Workflow Created\n\n` +
-            `📋 Workflow: ${result.workflowName}\n` +
-            `🆔 n8n ID: ${result.n8nWorkflowId}\n` +
-            `📊 Status: ${result.status}\n\n` +
-            `Check the n8n dashboard for more details.`
-          );
-        }
-        
+      if (result.status === "executing" && result.executionId) {
+  const executionId = parseInt(result.executionId);
+  
+  if (!isNaN(executionId)) {
+    alert(
+      `✅ SUCCESS! Workflow Executing Automatically!\n\n` +
+      `📋 Workflow: ${result.workflowName}\n` +
+      `🆔 n8n Workflow ID: ${result.n8nWorkflowId}\n` +
+      `⚡ Execution ID: ${executionId}\n` +
+      `🚀 Status: Running in n8n\n\n` +
+      `🎉 The workflow has been triggered automatically!\n` +
+      `✉️ Check your email inbox for the results.\n` +
+      `📊 You can also monitor progress in the n8n dashboard at http://localhost:5678`
+    );
+    setActiveExecutions(prev => new Set(prev).add(executionId));
+  } else {
+    alert(
+      `✅ Workflow Executing!\n\n` +
+      `📋 Workflow: ${result.workflowName}\n` +
+      `🆔 n8n ID: ${result.n8nWorkflowId}\n` +
+      `🚀 The workflow is running automatically in n8n.\n\n` +
+      `✉️ Check your email inbox for results.`
+    );
+  }
+} else if (result.status === "saved_and_activated") {
+  // NEW: Handle case where workflow is activated but not immediately executed (schedule workflows)
+  alert(
+    `✅ Workflow Created & Activated!\n\n` +
+    `📋 Workflow: ${result.workflowName}\n` +
+    `🆔 n8n ID: ${result.n8nWorkflowId}\n\n` +
+    `The workflow has been created and activated in n8n.\n` +
+    `⏰ It will run automatically according to its schedule.\n\n` +
+    `📊 Monitor progress in the n8n dashboard at http://localhost:5678`
+  );
+} else if (result.status === "created_without_n8n") {
+  alert(
+    `⚠️ Workflow Saved to Database Only\n\n` +
+    `📋 Workflow: ${result.workflowName}\n\n` +
+    `n8n is currently unavailable. The workflow was saved to the database.\n` +
+    `Please ensure n8n is running at http://localhost:5678 and try again.`
+  );
+} else {
+  // Generic success for any other status
+  alert(
+    `✅ Workflow Created Successfully!\n\n` +
+    `📋 Workflow: ${result.workflowName}\n` +
+    `🆔 n8n ID: ${result.n8nWorkflowId}\n` +
+    `📊 Status: ${result.status}\n\n` +
+    `The workflow has been processed successfully.`
+  );
+}
         setCredentialDialogOpen(false);
         return true;
       } else {
@@ -800,11 +810,14 @@ export const PreBuiltTemplates = () => {
               Choose from {workflows.length} pre-built templates or create your
               own workflow from scratch
             </p>
-            {activeExecutions.size > 0 && (
-              <div className="mt-2 text-sm text-blue-600">
-                🚀 {activeExecutions.size} workflow{activeExecutions.size > 1 ? 's' : ''} currently executing...
-              </div>
-            )}
+           {activeExecutions.size > 0 && (
+  <div className="mt-2 text-sm text-blue-600 bg-blue-50 p-2 rounded-md">
+    🚀 {activeExecutions.size} workflow{activeExecutions.size > 1 ? 's' : ''} currently executing...
+    <div className="text-xs text-blue-500 mt-1">
+      Automatically monitoring progress - you'll see results soon!
+    </div>
+  </div>
+)}
           </div>
           <CreateWorkflowButton onClick={handleCreateWorkflow} />
         </div>

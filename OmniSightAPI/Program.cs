@@ -350,41 +350,114 @@ app.MapPost("/api/workflows/create-and-execute", async (
 
         Console.WriteLine($"✅ Workflow saved to database: {newWorkflowId}");
 
-        // Activate and execute
         long? executionId = null;
         if (!string.IsNullOrEmpty(n8nWorkflowId) && n8nWorkflowId != "n8n_unavailable")
         {
             try
             {
-                // Wait a moment for workflow to be ready
+                Console.WriteLine($"⏳ Waiting 2 seconds for workflow to be ready...");
                 await Task.Delay(2000);
 
-                // Execute the workflow using the correct method for schedule triggers
-                var n8nExecutionId = await ExecuteScheduleWorkflow(
-                    httpClientFactory,
-                    n8nWorkflowId,
-                    request.Parameters
-                );
+                Console.WriteLine($"🎯 === STARTING WORKFLOW EXECUTION ===");
+
+                // Determine workflow trigger type
+                var triggerType = DetectWorkflowTriggerType(newWorkflow);
+
+                Console.WriteLine($"🎯 Trigger type detected: {triggerType}");
+                Console.WriteLine($"📋 Workflow name: {workflowName}");
+
+                // TEMPORARY FIX: Force webhook for Bitcoin Alert
+                if (workflowName.Contains("BitCoin") || workflowName.Contains("Bitcoin"))
+                {
+                    Console.WriteLine($"💡 TEMPORARY OVERRIDE: Forcing webhook execution for Bitcoin workflow");
+                    triggerType = "webhook";
+                }
+
+                string n8nExecutionId = null;
+
+                switch (triggerType)
+                {
+                    case "webhook":
+                        Console.WriteLine($"✅ === CALLING WEBHOOK EXECUTION ===");
+
+                        // ENHANCED: Add more debugging
+                        Console.WriteLine($"📋 Workflow ID: {n8nWorkflowId}");
+                        Console.WriteLine($"📋 Parameters count: {request.Parameters.Count}");
+                        foreach (var param in request.Parameters)
+                        {
+                            Console.WriteLine($"  📋 {param.Key} = {param.Value}");
+                        }
+
+                        n8nExecutionId = await ExecuteWebhookWorkflow(
+                            httpClientFactory,
+                            n8nWorkflowId,
+                            request.Parameters,
+                            newWorkflow
+                        );
+
+                        Console.WriteLine($"📊 ExecuteWebhookWorkflow returned: {n8nExecutionId ?? "NULL"}");
+                        break;
+
+                    case "manual":
+                        Console.WriteLine($"✅ Calling ExecuteManualWorkflow...");
+                        n8nExecutionId = await ExecuteManualWorkflow(
+                            httpClientFactory,
+                            n8nWorkflowId,
+                            newWorkflow,
+                            request.Parameters
+                        );
+                        Console.WriteLine($"📊 ExecuteManualWorkflow returned: {n8nExecutionId ?? "NULL"}");
+                        break;
+
+                    case "schedule":
+                        Console.WriteLine($"✅ Calling ExecuteScheduleWorkflow...");
+                        n8nExecutionId = await ExecuteScheduleWorkflow(
+                            httpClientFactory,
+                            n8nWorkflowId,
+                            request.Parameters
+                        );
+                        Console.WriteLine($"📊 ExecuteScheduleWorkflow returned: {n8nExecutionId ?? "NULL"}");
+                        break;
+
+                    default:
+                        Console.WriteLine($"⚠️ Unknown trigger type: {triggerType}");
+                        break;
+                }
 
                 if (!string.IsNullOrEmpty(n8nExecutionId))
                 {
+                    Console.WriteLine($"✅ Execution ID obtained: {n8nExecutionId}");
                     executionId = await RecordExecution(connection, n8nExecutionId, newWorkflowId, userId, "running");
-                    Console.WriteLine($"✅ Execution recorded: {executionId}");
+                    Console.WriteLine($"✅ Execution recorded in database with ID: {executionId}");
                 }
                 else
                 {
-                    Console.WriteLine($"⚠️ Workflow created but execution not triggered (schedule workflows run automatically)");
+                    Console.WriteLine($"❌ No execution ID returned - workflow created but not executed");
+                    Console.WriteLine($"💡 Workflow is active at: http://localhost:5678/workflow/{n8nWorkflowId}");
+
+                    // Print the curl command for manual testing
+                    var webhookPath = "bitcoin-alert"; // Hardcoded for now
+                    var payload = JsonSerializer.Serialize(request.Parameters);
+                    Console.WriteLine($"💡 You can test the webhook manually:");
+                    Console.WriteLine($"   curl -X POST http://localhost:5678/webhook-test/{webhookPath} \\");
+                    Console.WriteLine($"        -H 'Content-Type: application/json' \\");
+                    Console.WriteLine($"        -d '{payload}'");
                 }
             }
             catch (Exception execEx)
             {
-                Console.WriteLine($"⚠️ Execution failed: {execEx.Message}");
-                Console.WriteLine($"⚠️ Stack trace: {execEx.StackTrace}");
+                Console.WriteLine($"❌ EXCEPTION during execution: {execEx.Message}");
+                Console.WriteLine($"Stack: {execEx.StackTrace}");
             }
         }
 
+        Console.WriteLine($"🎯 === EXECUTION PHASE COMPLETE ===");
+        Console.WriteLine($"📊 Final executionId: {executionId?.ToString() ?? "NULL"}");
+
         var responseStatus = n8nWorkflowId == "n8n_unavailable" ? "created_without_n8n" :
                            executionId.HasValue ? "executing" : "saved_and_activated";
+
+        Console.WriteLine($"📊 Response status: {responseStatus}");
 
         var response = new CreateWorkflowResponse
         {
@@ -394,6 +467,8 @@ app.MapPost("/api/workflows/create-and-execute", async (
             ExecutionId = executionId?.ToString(),
             CreatedAt = DateTime.UtcNow
         };
+
+        Console.WriteLine($"📤 Returning response: {JsonSerializer.Serialize(response)}");
 
         return Results.Ok(response);
     }
@@ -517,7 +592,470 @@ app.MapGet("/api/overview/all", async (IConfiguration configuration) =>
 })
 .WithName("GetOverviewData");
 
-//----------------- HELPER FUNCTIONS------------------//
+//----------------- UPDATED HELPER FUNCTIONS FOR DYNAMIC WEBHOOK EXECUTION ------------------//
+
+static async Task<string> ExecuteWebhookWorkflow(
+    IHttpClientFactory httpClientFactory,
+    string n8nWorkflowId,
+    Dictionary<string, string> parameters,
+    Dictionary<string, object> workflowData)
+{
+    var httpClient = httpClientFactory.CreateClient("n8n");
+
+    try
+    {
+        Console.WriteLine($"🚀 === EXECUTING WEBHOOK WORKFLOW ===");
+        Console.WriteLine($"🆔 Workflow ID: {n8nWorkflowId}");
+        Console.WriteLine($"📋 Parameters: {JsonSerializer.Serialize(parameters)}");
+
+        // STEP 1: Extract webhook path from workflow data
+        string webhookPath = null;
+
+        Console.WriteLine($"🔍 Extracting webhook path from workflow data...");
+        Console.WriteLine($"🔍 Workflow data keys: {string.Join(", ", workflowData.Keys)}");
+
+        if (workflowData.ContainsKey("nodes"))
+        {
+            var nodesObj = workflowData["nodes"];
+            Console.WriteLine($"🔍 Nodes type: {nodesObj?.GetType().Name}");
+
+            if (nodesObj is List<object> nodesList)
+            {
+                Console.WriteLine($"✅ Found {nodesList.Count} nodes");
+
+                foreach (var nodeObj in nodesList)
+                {
+                    if (nodeObj is Dictionary<string, object> node)
+                    {
+                        var nodeType = node.GetValueOrDefault("type")?.ToString();
+                        var nodeName = node.GetValueOrDefault("name")?.ToString();
+
+                        if (nodeType == "n8n-nodes-base.webhook")
+                        {
+                            Console.WriteLine($"✅ Found webhook node: {nodeName}");
+
+                            if (node.ContainsKey("parameters") && node["parameters"] is Dictionary<string, object> nodeParams)
+                            {
+                                Console.WriteLine($"📋 Webhook node parameter keys: {string.Join(", ", nodeParams.Keys)}");
+
+                                if (nodeParams.ContainsKey("path"))
+                                {
+                                    webhookPath = nodeParams["path"]?.ToString();
+                                    Console.WriteLine($"✅ Extracted webhook path: '{webhookPath}'");
+                                    break;
+                                }
+                                else
+                                {
+                                    Console.WriteLine($"⚠️ Webhook node has no 'path' parameter");
+                                }
+                            }
+                            else
+                            {
+                                Console.WriteLine($"⚠️ Webhook node has no parameters or parameters is not a Dictionary");
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                Console.WriteLine($"⚠️ Nodes is not List<object>, it's: {nodesObj?.GetType().FullName}");
+            }
+        }
+        else
+        {
+            Console.WriteLine($"⚠️ No 'nodes' key in workflow data");
+        }
+
+        // STEP 2: If path not found in workflow data, try fetching from n8n API
+        if (string.IsNullOrEmpty(webhookPath))
+        {
+            Console.WriteLine($"💡 Path not found in workflow data, fetching from n8n API...");
+
+            try
+            {
+                var getResponse = await httpClient.GetAsync($"/api/v1/workflows/{n8nWorkflowId}");
+
+                if (getResponse.IsSuccessStatusCode)
+                {
+                    var content = await getResponse.Content.ReadAsStringAsync();
+                    var json = JsonSerializer.Deserialize<JsonElement>(content);
+
+                    Console.WriteLine($"✅ Retrieved workflow from n8n");
+
+                    // Try to find nodes in the response
+                    JsonElement fetchedNodes;
+                    if (json.TryGetProperty("data", out var data) && data.TryGetProperty("nodes", out fetchedNodes))
+                    {
+                        Console.WriteLine($"✅ Found nodes in data.nodes");
+                    }
+                    else if (json.TryGetProperty("nodes", out fetchedNodes))
+                    {
+                        Console.WriteLine($"✅ Found nodes at root level");
+                    }
+                    else
+                    {
+                        Console.WriteLine($"⚠️ No nodes found in n8n API response");
+                        return null;
+                    }
+
+                    // Search for webhook node
+                    foreach (var node in fetchedNodes.EnumerateArray())
+                    {
+                        if (node.TryGetProperty("type", out var type) &&
+                            type.GetString() == "n8n-nodes-base.webhook")
+                        {
+                            Console.WriteLine($"✅ Found webhook node in n8n response");
+
+                            if (node.TryGetProperty("parameters", out var params_) &&
+                                params_.TryGetProperty("path", out var pathProp))
+                            {
+                                webhookPath = pathProp.GetString();
+                                Console.WriteLine($"✅ Extracted path from n8n API: '{webhookPath}'");
+                                break;
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    Console.WriteLine($"⚠️ Failed to fetch workflow from n8n: {getResponse.StatusCode}");
+                }
+            }
+            catch (Exception fetchEx)
+            {
+                Console.WriteLine($"⚠️ Exception fetching from n8n: {fetchEx.Message}");
+            }
+        }
+
+        // STEP 3: Validate we have a webhook path
+        if (string.IsNullOrEmpty(webhookPath))
+        {
+            Console.WriteLine($"❌ FATAL: Could not extract webhook path");
+            return null;
+        }
+
+        Console.WriteLine($"✅ Using webhook path: '{webhookPath}'");
+
+        // STEP 4: Build webhook payload
+        var payload = new Dictionary<string, object>();
+        foreach (var param in parameters)
+        {
+            payload[param.Key] = param.Value;
+        }
+
+        Console.WriteLine($"📤 Webhook payload: {JsonSerializer.Serialize(payload)}");
+
+        // STEP 5: Try webhook-test endpoint first (for development/testing)
+        var testWebhookUrl = $"/webhook-test/{webhookPath}";
+        Console.WriteLine($"🌐 Trying test webhook: {testWebhookUrl}");
+
+        try
+        {
+            var testResponse = await httpClient.PostAsJsonAsync(testWebhookUrl, payload);
+            var testContent = await testResponse.Content.ReadAsStringAsync();
+
+            Console.WriteLine($"📥 Test webhook response: {testResponse.StatusCode}");
+
+            if (testResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"✅ Test webhook executed successfully!");
+
+                // Try to extract execution ID
+                try
+                {
+                    var result = JsonSerializer.Deserialize<JsonElement>(testContent);
+                    if (result.TryGetProperty("executionId", out var execId))
+                    {
+                        return execId.GetString();
+                    }
+                }
+                catch { }
+
+                return Guid.NewGuid().ToString("N");
+            }
+
+            Console.WriteLine($"⚠️ Test webhook failed: {testContent}");
+        }
+        catch (Exception testEx)
+        {
+            Console.WriteLine($"⚠️ Test webhook exception: {testEx.Message}");
+        }
+
+        // STEP 6: Try production webhook endpoint
+        var prodWebhookUrl = $"/webhook/{webhookPath}";
+        Console.WriteLine($"🌐 Trying production webhook: {prodWebhookUrl}");
+
+        var prodResponse = await httpClient.PostAsJsonAsync(prodWebhookUrl, payload);
+        var prodContent = await prodResponse.Content.ReadAsStringAsync();
+
+        Console.WriteLine($"📥 Production response: {prodResponse.StatusCode}");
+
+        if (prodResponse.IsSuccessStatusCode)
+        {
+            Console.WriteLine($"✅ Production webhook succeeded!");
+
+            // Try to extract execution ID
+            try
+            {
+                var result = JsonSerializer.Deserialize<JsonElement>(prodContent);
+                if (result.TryGetProperty("executionId", out var execId))
+                {
+                    return execId.GetString();
+                }
+            }
+            catch { }
+
+            return Guid.NewGuid().ToString("N");
+        }
+
+        Console.WriteLine($"❌ Both webhook endpoints failed");
+        Console.WriteLine($"❌ Production error: {prodContent}");
+
+        return null;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ EXCEPTION in ExecuteWebhookWorkflow: {ex.Message}");
+        Console.WriteLine($"Stack: {ex.StackTrace}");
+        return null;
+    }
+}
+
+static string ExtractWebhookPathFromWorkflowData(Dictionary<string, object> workflowData)
+{
+    try
+    {
+        Console.WriteLine($"🔍 Searching for webhook node in workflow data...");
+
+        if (workflowData.ContainsKey("nodes") && workflowData["nodes"] is List<object> nodes)
+        {
+            Console.WriteLine($"🔍 Found {nodes.Count} nodes to search");
+
+            foreach (var nodeObj in nodes)
+            {
+                if (nodeObj is Dictionary<string, object> node)
+                {
+                    var nodeType = node.GetValueOrDefault("type")?.ToString();
+                    var nodeName = node.GetValueOrDefault("name")?.ToString() ?? "Unnamed";
+
+                    if (nodeType == "n8n-nodes-base.webhook")
+                    {
+                        Console.WriteLine($"✅ Found webhook node: {nodeName}");
+
+                        if (node.ContainsKey("parameters") && node["parameters"] is Dictionary<string, object> parameters)
+                        {
+                            if (parameters.ContainsKey("path"))
+                            {
+                                var path = parameters["path"]?.ToString();
+                                Console.WriteLine($"✅ Extracted webhook path: {path}");
+                                return path;
+                            }
+                            else
+                            {
+                                Console.WriteLine($"⚠️ Webhook node found but no path parameter");
+                                Console.WriteLine($"📋 Available parameters: {string.Join(", ", parameters.Keys)}");
+                            }
+                        }
+                        else
+                        {
+                            Console.WriteLine($"⚠️ Webhook node found but no parameters object");
+                        }
+                    }
+                }
+            }
+        }
+        else
+        {
+            Console.WriteLine($"⚠️ No nodes found in workflow data or nodes is not a list");
+        }
+
+        Console.WriteLine($"❌ No webhook path found in workflow data");
+        return null;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ Error extracting webhook path from workflow data: {ex.Message}");
+        return null;
+    }
+}
+
+static string ExtractWebhookPathFromN8nResponse(JsonElement workflowDetails)
+{
+    try
+    {
+        Console.WriteLine($"🔍 Searching for webhook node in n8n response...");
+
+        JsonElement nodes;
+
+        // Try different response structures
+        if (workflowDetails.TryGetProperty("data", out var data) && data.TryGetProperty("nodes", out nodes))
+        {
+            Console.WriteLine($"🔍 Found nodes in data.nodes");
+        }
+        else if (workflowDetails.TryGetProperty("nodes", out nodes))
+        {
+            Console.WriteLine($"🔍 Found nodes in root nodes property");
+        }
+        else
+        {
+            Console.WriteLine($"⚠️ No nodes found in n8n response structure");
+            return null;
+        }
+
+        foreach (var node in nodes.EnumerateArray())
+        {
+            if (node.TryGetProperty("type", out var typeProp))
+            {
+                var nodeType = typeProp.GetString();
+
+                if (nodeType == "n8n-nodes-base.webhook")
+                {
+                    Console.WriteLine($"✅ Found webhook node in n8n response");
+
+                    if (node.TryGetProperty("parameters", out var parameters) &&
+                        parameters.TryGetProperty("path", out var pathProp))
+                    {
+                        var path = pathProp.GetString();
+                        Console.WriteLine($"✅ Extracted webhook path from n8n: {path}");
+                        return path;
+                    }
+                }
+            }
+        }
+
+        Console.WriteLine($"❌ No webhook node found in n8n response");
+        return null;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ Error extracting webhook path from n8n response: {ex.Message}");
+        return null;
+    }
+}
+
+static string DetectWorkflowTriggerType(Dictionary<string, object> workflowData)
+{
+    try
+    {
+        Console.WriteLine($"🔍 === DETECTING WORKFLOW TRIGGER TYPE ===");
+
+        if (!workflowData.ContainsKey("nodes"))
+        {
+            Console.WriteLine($"⚠️ No 'nodes' key in workflow data, defaulting to manual");
+            return "manual";
+        }
+
+        var nodesObj = workflowData["nodes"];
+        Console.WriteLine($"🔍 Nodes type: {nodesObj?.GetType().Name}");
+
+        // Handle List<object> (most common)
+        if (nodesObj is List<object> nodesList)
+        {
+            Console.WriteLine($"✅ Processing {nodesList.Count} nodes");
+
+            foreach (var nodeObj in nodesList)
+            {
+                if (nodeObj is Dictionary<string, object> node)
+                {
+                    var nodeType = node.GetValueOrDefault("type")?.ToString();
+                    var nodeName = node.GetValueOrDefault("name")?.ToString() ?? "Unnamed";
+
+                    // Check for webhook trigger (highest priority)
+                    if (nodeType == "n8n-nodes-base.webhook")
+                    {
+                        Console.WriteLine($"✅ WEBHOOK trigger detected at node: {nodeName}");
+                        return "webhook";
+                    }
+
+                    // Check for manual trigger
+                    if (nodeType == "n8n-nodes-base.manualTrigger")
+                    {
+                        Console.WriteLine($"✅ MANUAL trigger detected at node: {nodeName}");
+                        return "manual";
+                    }
+
+                    // Check for schedule trigger
+                    if (nodeType == "n8n-nodes-base.scheduleTrigger" ||
+                        nodeType == "n8n-nodes-base.cronTrigger")
+                    {
+                        Console.WriteLine($"✅ SCHEDULE trigger detected at node: {nodeName}");
+                        return "schedule";
+                    }
+                }
+                else if (nodeObj is JsonElement jsonNode)
+                {
+                    if (jsonNode.TryGetProperty("type", out var typeProp))
+                    {
+                        var nodeType = typeProp.GetString();
+
+                        if (nodeType == "n8n-nodes-base.webhook")
+                        {
+                            Console.WriteLine($"✅ WEBHOOK trigger detected (JsonElement)");
+                            return "webhook";
+                        }
+
+                        if (nodeType == "n8n-nodes-base.manualTrigger")
+                        {
+                            Console.WriteLine($"✅ MANUAL trigger detected (JsonElement)");
+                            return "manual";
+                        }
+
+                        if (nodeType == "n8n-nodes-base.scheduleTrigger" ||
+                            nodeType == "n8n-nodes-base.cronTrigger")
+                        {
+                            Console.WriteLine($"✅ SCHEDULE trigger detected (JsonElement)");
+                            return "schedule";
+                        }
+                    }
+                }
+            }
+        }
+        // Handle JsonElement array
+        else if (nodesObj is JsonElement jsonElement && jsonElement.ValueKind == JsonValueKind.Array)
+        {
+            Console.WriteLine($"✅ Processing JsonElement array");
+
+            foreach (var node in jsonElement.EnumerateArray())
+            {
+                if (node.TryGetProperty("type", out var typeProp))
+                {
+                    var nodeType = typeProp.GetString();
+
+                    if (nodeType == "n8n-nodes-base.webhook")
+                    {
+                        Console.WriteLine($"✅ WEBHOOK trigger detected");
+                        return "webhook";
+                    }
+
+                    if (nodeType == "n8n-nodes-base.manualTrigger")
+                    {
+                        Console.WriteLine($"✅ MANUAL trigger detected");
+                        return "manual";
+                    }
+
+                    if (nodeType == "n8n-nodes-base.scheduleTrigger" ||
+                        nodeType == "n8n-nodes-base.cronTrigger")
+                    {
+                        Console.WriteLine($"✅ SCHEDULE trigger detected");
+                        return "schedule";
+                    }
+                }
+            }
+        }
+
+        Console.WriteLine($"⚠️ No trigger node found, defaulting to manual");
+        return "manual";
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ Error detecting trigger type: {ex.Message}");
+        return "manual";
+    }
+}
+
+//----------------- EXISTING HELPER FUNCTIONS (KEEP THESE) ------------------//
+// FIXED: Working manual workflow execution that handles n8n's actual API endpoints
 static async Task<string> ExecuteManualWorkflow(
     IHttpClientFactory httpClientFactory,
     string n8nWorkflowId,
@@ -526,140 +1064,331 @@ static async Task<string> ExecuteManualWorkflow(
 {
     var httpClient = httpClientFactory.CreateClient("n8n");
 
-    // METHOD 1: Try test endpoint (best for manual trigger workflows)
     try
     {
-        Console.WriteLine($"🚀 Method 1: Trying test endpoint for workflow: {n8nWorkflowId}");
+        Console.WriteLine($"🚀 Executing MANUAL trigger workflow: {n8nWorkflowId}");
+        Console.WriteLine($"📋 Parameters to pass: {JsonSerializer.Serialize(parameters)}");
 
+        // Prepare trigger data - this is what the Manual Trigger node will receive
         var triggerData = new Dictionary<string, object>();
+
+        // Add all parameters to trigger data
         foreach (var param in parameters)
         {
             triggerData[param.Key] = param.Value;
+            Console.WriteLine($"  ✅ Adding to trigger data: {param.Key} = {param.Value}");
         }
 
-        var testPayload = new { triggerData };
+        // METHOD 1: Use the /run endpoint (works in most n8n versions)
+        try
+        {
+            Console.WriteLine($"🎯 Method 1: Trying /run endpoint...");
+
+            // Build the run payload
+            var runPayload = new
+            {
+                workflowData = new
+                {
+                    id = n8nWorkflowId,
+                    name = workflowData.GetValueOrDefault("name", "Workflow"),
+                    nodes = workflowData.GetValueOrDefault("nodes") ?? new List<object>(),
+                    connections = workflowData.GetValueOrDefault("connections") ?? new Dictionary<string, object>(),
+                    active = true,
+                    settings = workflowData.GetValueOrDefault("settings") ?? new Dictionary<string, object>()
+                },
+                // Pass trigger data directly
+                runData = new
+                {
+                    // This structure injects data at the Manual Trigger node
+                    startData = new
+                    {
+                        destinationNode = "Manual Trigger"
+                    },
+                    executionData = new
+                    {
+                        contextData = new { },
+                        nodeExecutionStack = new[]
+                        {
+                            new
+                            {
+                                node = new
+                                {
+                                    name = "Manual Trigger",
+                                    type = "n8n-nodes-base.manualTrigger"
+                                },
+                                data = new
+                                {
+                                    main = new[]
+                                    {
+                                        new[]
+                                        {
+                                            new { json = triggerData }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            };
+
+            Console.WriteLine($"📤 Sending run payload to /run endpoint");
+
+            var runResponse = await httpClient.PostAsJsonAsync($"/api/v1/workflows/run", runPayload);
+            var runContent = await runResponse.Content.ReadAsStringAsync();
+
+            Console.WriteLine($"📥 Run response status: {runResponse.StatusCode}");
+            Console.WriteLine($"📥 Run response body: {runContent}");
+
+            if (runResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"✅ Workflow executed via /run endpoint!");
+
+                try
+                {
+                    var result = JsonSerializer.Deserialize<JsonElement>(runContent);
+
+                    // Try to extract execution ID
+                    if (result.TryGetProperty("data", out var data))
+                    {
+                        if (data.TryGetProperty("executionId", out var execId))
+                        {
+                            return execId.GetString();
+                        }
+                    }
+                }
+                catch { }
+
+                return Guid.NewGuid().ToString("N");
+            }
+
+            Console.WriteLine($"⚠️ /run endpoint failed: {runContent}");
+        }
+        catch (Exception runEx)
+        {
+            Console.WriteLine($"⚠️ /run method exception: {runEx.Message}");
+        }
+
+        // METHOD 2: Use the webhook trigger approach (most reliable for manual triggers)
+        try
+        {
+            Console.WriteLine($"🎯 Method 2: Trying webhook trigger approach...");
+
+            // First, we need to get the workflow to check if it has a webhook path
+            var getWorkflowResponse = await httpClient.GetAsync($"/api/v1/workflows/{n8nWorkflowId}");
+
+            if (getWorkflowResponse.IsSuccessStatusCode)
+            {
+                var workflowContent = await getWorkflowResponse.Content.ReadAsStringAsync();
+                var workflowJson = JsonSerializer.Deserialize<JsonElement>(workflowContent);
+
+                Console.WriteLine($"✅ Retrieved workflow details");
+
+                // For manual trigger workflows, we'll use a different approach
+                // Activate the workflow first
+                var activateResponse = await httpClient.PatchAsJsonAsync(
+                    $"/api/v1/workflows/{n8nWorkflowId}",
+                    new { active = true }
+                );
+
+                if (activateResponse.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"✅ Workflow activated");
+
+                    // Wait a moment for activation
+                    await Task.Delay(1000);
+
+                    // Now try to trigger it using the production webhook endpoint
+                    var triggerUrl = $"/webhook-test/{n8nWorkflowId}";
+                    Console.WriteLine($"🌐 Attempting to trigger via: {triggerUrl}");
+
+                    var webhookResponse = await httpClient.PostAsJsonAsync(triggerUrl, triggerData);
+                    var webhookContent = await webhookResponse.Content.ReadAsStringAsync();
+
+                    Console.WriteLine($"📥 Webhook response: {webhookResponse.StatusCode}");
+                    Console.WriteLine($"📥 Webhook content: {webhookContent}");
+
+                    if (webhookResponse.IsSuccessStatusCode)
+                    {
+                        Console.WriteLine($"✅ Workflow triggered via webhook!");
+                        return Guid.NewGuid().ToString("N");
+                    }
+                }
+            }
+        }
+        catch (Exception webhookEx)
+        {
+            Console.WriteLine($"⚠️ Webhook method exception: {webhookEx.Message}");
+        }
+
+        // METHOD 3: Manual execution via n8n CLI command (fallback)
+        try
+        {
+            Console.WriteLine($"🎯 Method 3: Using direct execution with payload...");
+
+            // Some n8n versions support direct execution with data
+            var directPayload = new
+            {
+                data = new[]
+                {
+                    new { json = triggerData }
+                }
+            };
+
+            var directResponse = await httpClient.PostAsJsonAsync(
+                $"/api/v1/workflows/{n8nWorkflowId}/execute",
+                directPayload
+            );
+
+            var directContent = await directResponse.Content.ReadAsStringAsync();
+            Console.WriteLine($"📥 Direct execute response: {directResponse.StatusCode}");
+            Console.WriteLine($"📥 Direct execute content: {directContent}");
+
+            if (directResponse.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"✅ Direct execution succeeded!");
+                return Guid.NewGuid().ToString("N");
+            }
+        }
+        catch (Exception directEx)
+        {
+            Console.WriteLine($"⚠️ Direct execution exception: {directEx.Message}");
+        }
+
+        // LAST RESORT: Try activating and returning success
+        // The workflow will be ready for manual trigger in n8n UI
+        Console.WriteLine($"ℹ️ Workflow is created and active. User can trigger manually from n8n UI.");
+        Console.WriteLine($"💡 Workflow URL: http://localhost:5678/workflow/{n8nWorkflowId}");
+
+        return null;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"❌ Error executing manual workflow: {ex.Message}");
+        Console.WriteLine($"❌ Stack trace: {ex.StackTrace}");
+        return null;
+    }
+}
+static async Task<string> ExecuteScheduleWorkflow(
+    IHttpClientFactory httpClientFactory,
+    string n8nWorkflowId,
+    Dictionary<string, string> parameters)
+{
+    var httpClient = httpClientFactory.CreateClient("n8n");
+
+    try
+    {
+        Console.WriteLine($"🚀 Executing schedule workflow: {n8nWorkflowId}");
+
+        var triggerData = new Dictionary<string, object>();
+
+        foreach (var param in parameters)
+        {
+            if (param.Key == "fromEmail")
+                triggerData["fromEmail"] = param.Value;
+            else if (param.Key == "toEmail")
+                triggerData["toEmail"] = param.Value;
+            else if (param.Key == "emailFormat")
+                triggerData["emailFormat"] = param.Value;
+            else if (param.Key == "url")
+                triggerData["url"] = param.Value;
+        }
+
+        var testPayload = new
+        {
+            triggerData = new[] { new { json = triggerData } }
+        };
+
+        Console.WriteLine($"📤 Test payload: {JsonSerializer.Serialize(testPayload)}");
 
         var testResponse = await httpClient.PostAsJsonAsync($"/api/v1/workflows/{n8nWorkflowId}/test", testPayload);
         var testContent = await testResponse.Content.ReadAsStringAsync();
 
         Console.WriteLine($"📥 Test response: {testResponse.StatusCode}");
+        Console.WriteLine($"📥 Test content: {testContent}");
 
         if (testResponse.IsSuccessStatusCode)
         {
-            Console.WriteLine($"✅ Test execution succeeded!");
+            Console.WriteLine($"✅ Schedule workflow test execution succeeded!");
 
             // Try to extract execution ID
+            // Try to extract execution ID from n8n response
             try
             {
                 var result = JsonSerializer.Deserialize<JsonElement>(testContent);
-                if (result.TryGetProperty("executionId", out var execId))
-                    return execId.GetString();
-                if (result.TryGetProperty("data", out var data) && data.TryGetProperty("executionId", out var dataExecId))
-                    return dataExecId.GetString();
+                Console.WriteLine($"🔍 Parsing n8n response: {testContent}");
+
+                // Try different possible locations for execution ID
+                if (result.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.Number)
+                {
+                    var executionId = idProp.GetInt64().ToString();
+                    Console.WriteLine($"✅ Found execution ID in 'id' field: {executionId}");
+                    return executionId;
+                }
+                else if (result.TryGetProperty("data", out var data) && data.TryGetProperty("id", out var dataId) && dataId.ValueKind == JsonValueKind.Number)
+                {
+                    var executionId = dataId.GetInt64().ToString();
+                    Console.WriteLine($"✅ Found execution ID in 'data.id' field: {executionId}");
+                    return executionId;
+                }
+                else if (result.TryGetProperty("executionId", out var execId))
+                {
+                    var executionId = execId.ValueKind == JsonValueKind.Number ? execId.GetInt64().ToString() : execId.GetString();
+                    Console.WriteLine($"✅ Found execution ID in 'executionId' field: {executionId}");
+                    return executionId;
+                }
+                else
+                {
+                    Console.WriteLine($"⚠️ Could not find execution ID in response. Available properties: {string.Join(", ", result.EnumerateObject().Select(p => p.Name))}");
+                }
+            }
+            catch (JsonException jsonEx)
+            {
+                Console.WriteLine($"❌ JSON parsing error: {jsonEx.Message}");
             }
             catch { }
 
             return Guid.NewGuid().ToString("N");
         }
-
-        Console.WriteLine($"⚠️ Test method failed: {testContent}");
-    }
-    catch (Exception ex1)
-    {
-        Console.WriteLine($"⚠️ Test method exception: {ex1.Message}");
-    }
-
-    // METHOD 2: Try simple execute endpoint
-    try
-    {
-        Console.WriteLine($"🚀 Method 2: Trying execute endpoint for workflow: {n8nWorkflowId}");
-
-        var executeResponse = await httpClient.PostAsync($"/api/v1/workflows/{n8nWorkflowId}/execute", null);
-        var executeContent = await executeResponse.Content.ReadAsStringAsync();
-
-        Console.WriteLine($"📥 Execute response: {executeResponse.StatusCode}");
-
-        if (executeResponse.IsSuccessStatusCode)
+        else
         {
-            Console.WriteLine($"✅ Execute method succeeded!");
+            Console.WriteLine($"⚠️ Test execution failed: {testContent}");
 
+            // METHOD 2: Try direct execution
             try
             {
-                var result = JsonSerializer.Deserialize<JsonElement>(executeContent);
-                if (result.TryGetProperty("data", out var data) && data.TryGetProperty("executionId", out var execId))
-                    return execId.GetString();
-            }
-            catch { }
+                var executeResponse = await httpClient.PostAsync($"/api/v1/workflows/{n8nWorkflowId}/execute", null);
+                var executeContent = await executeResponse.Content.ReadAsStringAsync();
 
-            return Guid.NewGuid().ToString("N");
+                if (executeResponse.IsSuccessStatusCode)
+                {
+                    Console.WriteLine($"✅ Direct execution succeeded!");
+
+                    try
+                    {
+                        var result = JsonSerializer.Deserialize<JsonElement>(executeContent);
+                        if (result.TryGetProperty("data", out var data) && data.TryGetProperty("executionId", out var execId))
+                            return execId.GetString();
+                    }
+                    catch (JsonException) { }
+
+                    return Guid.NewGuid().ToString("N");
+                }
+            }
+            catch (Exception ex2)
+            {
+                Console.WriteLine($"⚠️ Direct execution failed: {ex2.Message}");
+            }
         }
 
-        Console.WriteLine($"⚠️ Execute method failed: {executeContent}");
+        Console.WriteLine($"ℹ️ Schedule workflow activated - it will run automatically according to its schedule");
+        return null;
     }
-    catch (Exception ex2)
+    catch (Exception ex)
     {
-        Console.WriteLine($"⚠️ Execute method exception: {ex2.Message}");
+        Console.WriteLine($"❌ Error executing schedule workflow: {ex.Message}");
+        return null;
     }
-
-    // METHOD 3: Try run with full workflow data
-    try
-    {
-        Console.WriteLine($"🚀 Method 3: Trying run endpoint with full data for workflow: {n8nWorkflowId}");
-
-        var jsonData = new Dictionary<string, object>();
-        foreach (var param in parameters)
-        {
-            jsonData[param.Key] = param.Value;
-        }
-
-        var runPayload = new
-        {
-            workflowData = new
-            {
-                id = n8nWorkflowId,
-                name = workflowData.GetValueOrDefault("name", "Workflow"),
-                nodes = workflowData.GetValueOrDefault("nodes") ?? new List<object>(),
-                connections = workflowData.GetValueOrDefault("connections") ?? new Dictionary<string, object>(),
-                settings = workflowData.GetValueOrDefault("settings") ?? new Dictionary<string, object>(),
-                active = true
-            },
-            runData = new Dictionary<string, object>
-            {
-                ["Manual Trigger"] = new[] { new { json = jsonData } }
-            }
-        };
-
-        var runResponse = await httpClient.PostAsJsonAsync($"/api/v1/workflows/{n8nWorkflowId}/run", runPayload);
-        var runContent = await runResponse.Content.ReadAsStringAsync();
-
-        Console.WriteLine($"📥 Run response: {runResponse.StatusCode}");
-        Console.WriteLine($"📥 Run content: {runContent}");
-
-        if (runResponse.IsSuccessStatusCode)
-        {
-            Console.WriteLine($"✅ Run method succeeded!");
-
-            try
-            {
-                var result = JsonSerializer.Deserialize<JsonElement>(runContent);
-                if (result.TryGetProperty("data", out var data) && data.TryGetProperty("executionId", out var execId))
-                    return execId.GetString();
-            }
-            catch { }
-
-            return Guid.NewGuid().ToString("N");
-        }
-
-        Console.WriteLine($"⚠️ Run method failed: {runContent}");
-    }
-    catch (Exception ex3)
-    {
-        Console.WriteLine($"⚠️ Run method exception: {ex3.Message}");
-    }
-
-    // All methods failed
-    Console.WriteLine($"❌ All execution methods failed. Workflow is created and active, but needs manual trigger.");
-    return null;
 }
 
 static async Task<string> CreateCredentialInN8n(
@@ -882,144 +1611,20 @@ static async Task<bool> ActivateN8nWorkflow(IHttpClientFactory httpClientFactory
     }
 }
 
-static async Task<string> ExecuteScheduleWorkflow(
-    IHttpClientFactory httpClientFactory,
-    string n8nWorkflowId,
-    Dictionary<string, string> parameters)
-{
-    var httpClient = httpClientFactory.CreateClient("n8n");
-
-    try
-    {
-        Console.WriteLine($"🚀 Executing schedule workflow: {n8nWorkflowId}");
-
-        var triggerData = new Dictionary<string, object>();
-
-        foreach (var param in parameters)
-        {
-            if (param.Key == "fromEmail")
-                triggerData["fromEmail"] = param.Value;
-            else if (param.Key == "toEmail")
-                triggerData["toEmail"] = param.Value;
-            else if (param.Key == "emailFormat")
-                triggerData["emailFormat"] = param.Value;
-            else if (param.Key == "url")
-                triggerData["url"] = param.Value;
-        }
-
-        var testPayload = new
-        {
-            triggerData = new[] { new { json = triggerData } }
-        };
-
-        Console.WriteLine($"📤 Test payload: {JsonSerializer.Serialize(testPayload)}");
-
-        var testResponse = await httpClient.PostAsJsonAsync($"/api/v1/workflows/{n8nWorkflowId}/test", testPayload);
-        var testContent = await testResponse.Content.ReadAsStringAsync();
-
-        Console.WriteLine($"📥 Test response: {testResponse.StatusCode}");
-        Console.WriteLine($"📥 Test content: {testContent}");
-
-        if (testResponse.IsSuccessStatusCode)
-        {
-            Console.WriteLine($"✅ Schedule workflow test execution succeeded!");
-
-            // Try to extract execution ID
-            try
-            {
-                var result = JsonSerializer.Deserialize<JsonElement>(testContent);
-                if (result.TryGetProperty("executionId", out var execId))
-                    return execId.GetString();
-                if (result.TryGetProperty("data", out var data) && data.TryGetProperty("executionId", out var dataExecId))
-                    return dataExecId.GetString();
-            }
-            catch (JsonException) { }
-
-            return Guid.NewGuid().ToString("N");
-        }
-        else
-        {
-            Console.WriteLine($"⚠️ Test execution failed: {testContent}");
-
-            // METHOD 2: Try direct execution
-            try
-            {
-                var executeResponse = await httpClient.PostAsync($"/api/v1/workflows/{n8nWorkflowId}/execute", null);
-                var executeContent = await executeResponse.Content.ReadAsStringAsync();
-
-                if (executeResponse.IsSuccessStatusCode)
-                {
-                    Console.WriteLine($"✅ Direct execution succeeded!");
-
-                    try
-                    {
-                        var result = JsonSerializer.Deserialize<JsonElement>(executeContent);
-                        if (result.TryGetProperty("data", out var data) && data.TryGetProperty("executionId", out var execId))
-                            return execId.GetString();
-                    }
-                    catch (JsonException) { }
-
-                    return Guid.NewGuid().ToString("N");
-                }
-            }
-            catch (Exception ex2)
-            {
-                Console.WriteLine($"⚠️ Direct execution failed: {ex2.Message}");
-            }
-        }
-
-        Console.WriteLine($"ℹ️ Schedule workflow activated - it will run automatically according to its schedule");
-        return null;
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"❌ Error executing schedule workflow: {ex.Message}");
-        return null;
-    }
-}
-
-static async Task<bool> TryAlternativeActivation(IHttpClientFactory httpClientFactory, string n8nWorkflowId)
-{
-    try
-    {
-        var httpClient = httpClientFactory.CreateClient("n8n");
-
-        // Method 1: Try PUT endpoint
-        var putPayload = new { active = true };
-        var putResponse = await httpClient.PutAsJsonAsync($"/api/v1/workflows/{n8nWorkflowId}", putPayload);
-
-        if (putResponse.IsSuccessStatusCode)
-        {
-            Console.WriteLine($"✅ Workflow activated via PUT method");
-            return true;
-        }
-
-        // Method 2: Try updating workflow settings
-        var updatePayload = new
-        {
-            settings = new { active = true }
-        };
-        var updateResponse = await httpClient.PutAsJsonAsync($"/api/v1/workflows/{n8nWorkflowId}", updatePayload);
-
-        if (updateResponse.IsSuccessStatusCode)
-        {
-            Console.WriteLine($"✅ Workflow activated via settings update");
-            return true;
-        }
-
-        Console.WriteLine($"❌ All activation methods failed");
-        return false;
-    }
-    catch (Exception ex)
-    {
-        Console.WriteLine($"❌ Alternative activation failed: {ex.Message}");
-        return false;
-    }
-}
-
 static async Task<long> RecordExecution(SqlConnection connection, string n8nExecutionId, string workflowId, string userId, string status)
 {
-    var executionId = (DateTime.UtcNow.Ticks % 1000000000000L) * 10000 + new Random().Next(1000, 9999);
+    // Use the n8n execution ID directly if it's numeric
+    long executionId;
+    if (long.TryParse(n8nExecutionId, out executionId))
+    {
+        Console.WriteLine($"✅ Using n8n execution ID: {executionId}");
+    }
+    else
+    {
+        // Fallback to generating our own ID
+        executionId = (DateTime.UtcNow.Ticks % 1000000000000L) * 10000 + new Random().Next(1000, 9999);
+        Console.WriteLine($"⚠️ Generated fallback execution ID: {executionId}");
+    }
 
     await connection.ExecuteAsync(@"
         INSERT INTO [OmniSight].[dbo].[executions] 
@@ -1039,7 +1644,6 @@ static async Task<long> RecordExecution(SqlConnection connection, string n8nExec
 
     return executionId;
 }
-
 static Dictionary<string, object> CreateWorkflowFromTemplate(
     JsonElement template,
     Dictionary<string, string> credentialMappings,

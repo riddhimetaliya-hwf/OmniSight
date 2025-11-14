@@ -1,0 +1,122 @@
+{
+  "name": "Bitcoin Price Alert",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bitcoin-price-alert",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "f3f85af9-4546-4654-a91b-eb9919761e9b",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+        "options": {}
+      },
+      "id": "d2291c0d-ee9d-4d08-9a8f-abd9b0a4aff2",
+      "name": "Get Bitcoin Price",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "functionCode": "// Process data and prepare email\nconst bitcoinData = $json;\nconst price = bitcoinData.bitcoin?.usd || 'N/A';\nconst timestamp = new Date().toLocaleString();\n\n// Use parameters from webhook body\nconst webhookData = $node[\"Webhook\"].json.body;\nconst fromEmail = webhookData.fromEmail || 'noreply@example.com';\nconst toEmail = webhookData.toEmail || 'user@example.com';\nconst subject = webhookData.subject || `Bitcoin Price: $${price}`;\n\nconsole.log('📧 From Email:', fromEmail);\nconsole.log('📧 To Email:', toEmail);\nconsole.log('💰 Bitcoin Price:', price);\n\nif (price > 50000) {\n  return [{\n    json: {\n      fromEmail: fromEmail,\n      toEmail: toEmail,\n      subject: \"🚨 BITCOIN PRICE ALERT - $\" + price,\n      message: \"<h2>Bitcoin Price Alert</h2><p>Bitcoin price is currently <strong>HIGH</strong>!</p><ul><li>💰 Price: $\" + price + \"</li><li>📈 Status: ABOVE $50,000</li><li>🕐 Time: \" + timestamp + \"</li></ul><p>Consider monitoring the market closely.</p>\",\n      emailFormat: \"html\",\n      status: \"high_alert\",\n      price: price,\n      timestamp: timestamp\n    }\n  }];\n} else {\n  return [{\n    json: {\n      fromEmail: fromEmail,\n      toEmail: toEmail,\n      subject: \"📊 Bitcoin Price Update - $\" + price,\n      message: \"<h2>Bitcoin Price Update</h2><p>Bitcoin price is within normal range.</p><ul><li>💰 Price: $\" + price + \"</li><li>📊 Status: BELOW $50,000</li><li>🕐 Time: \" + timestamp + \"</li></ul><p>No immediate action needed.</p>\",\n      emailFormat: \"html\",\n      status: \"normal\",\n      price: price,\n      timestamp: timestamp\n    }\n  }];\n}"
+      },
+      "id": "668c3478-13e7-43be-a39a-bcdf155385b6",
+      "name": "Check Price & Create Message",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "fromEmail": "={{ $json.fromEmail }}",
+        "toEmail": "={{ $json.toEmail }}",
+        "subject": "={{ $json.subject }}",
+        "emailFormat": "html",
+        "html": "={{ $json.message }}",
+        "options": {}
+      },
+      "id": "51afa00a-5cf5-4141-a1db-e10d3777553c",
+      "name": "Send Email Alert",
+      "type": "n8n-nodes-base.emailSend",
+      "typeVersion": 2,
+      "position": [900, 300],
+      "credentials": {
+        "smtp": {
+          "id": "{{smtpCredentialId}}",
+          "name": "SMTP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "responseMode": "lastNode",
+        "options": {},
+        "responseData": "={{ { 'message': 'Bitcoin price alert processed successfully', 'data': { 'price': $json.price, 'timestamp': $json.timestamp } } }}"
+      },
+      "id": "respond-node-id",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1100, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get Bitcoin Price",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Bitcoin Price": {
+      "main": [
+        [
+          {
+            "node": "Check Price & Create Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Price & Create Message": {
+      "main": [
+        [
+          {
+            "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Alert": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
