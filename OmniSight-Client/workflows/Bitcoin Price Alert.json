@@ -2,12 +2,18 @@
   "name": "Bitcoin Price Alert",
   "nodes": [
     {
-      "parameters": {},
-      "id": "f3f85af9-4546-4654-a91b-eb9919761e9b",
-      "name": "Manual Trigger",
-      "type": "n8n-nodes-base.manualTrigger",
+      "parameters": {
+        "path": "bitcoin-alert",
+        "httpMethod": "POST",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger-node",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
       "typeVersion": 1,
-      "position": [0, 0]
+      "position": [0, 0],
+      "webhookId": "bitcoin-alert-webhook"
     },
     {
       "parameters": {
@@ -22,7 +28,7 @@
     },
     {
       "parameters": {
-        "functionCode": "const bitcoinData = $input.item.json;\nconst price = bitcoinData.bitcoin.usd;\nconst timestamp = new Date().toLocaleString();\n\nconst triggerData = $('Manual Trigger').first().json;\nconst fromEmail = triggerData.fromEmail || 'noreply@example.com';\nconst toEmail = triggerData.toEmail || 'user@example.com';\n\nconsole.log('📧 From Email:', fromEmail);\nconsole.log('📧 To Email:', toEmail);\nconsole.log('💰 Bitcoin Price:', price);\n\nif (price > 50000) {\n  return {\n    json: {\n      fromEmail: fromEmail,\n      toEmail: toEmail,\n      subject: \"🚨 BITCOIN PRICE ALERT - $\" + price,\n      message: \"<h2>Bitcoin Price Alert</h2><p>Bitcoin price is currently <strong>HIGH</strong>!</p><ul><li>💰 Price: $\" + price + \"</li><li>📈 Status: ABOVE $50,000</li><li>🕐 Time: \" + timestamp + \"</li></ul><p>Consider monitoring the market closely.</p>\",\n      emailFormat: \"html\",\n      status: \"high_alert\",\n      price: price,\n      timestamp: timestamp\n    }\n  };\n} else {\n  return {\n    json: {\n      fromEmail: fromEmail,\n      toEmail: toEmail,\n      subject: \"📊 Bitcoin Price Update - $\" + price,\n      message: \"<h2>Bitcoin Price Update</h2><p>Bitcoin price is within normal range.</p><ul><li>💰 Price: $\" + price + \"</li><li>📊 Status: BELOW $50,000</li><li>🕐 Time: \" + timestamp + \"</li></ul><p>No immediate action needed.</p>\",\n      emailFormat: \"html\",\n      status: \"normal\",\n      price: price,\n      timestamp: timestamp\n    }\n  };\n}"
+        "functionCode": "// Get data from webhook trigger\nconst webhookData = $input.first().json;\nconst fromEmail = webhookData.fromEmail || 'noreply@example.com';\nconst toEmail = webhookData.toEmail || 'user@example.com';\n\n// Get Bitcoin price from previous node\nconst bitcoinData = $('Get Bitcoin Price').first().json;\nconst price = bitcoinData.bitcoin.usd;\nconst timestamp = new Date().toLocaleString();\n\nconsole.log('?? From Email:', fromEmail);\nconsole.log('?? To Email:', toEmail);\nconsole.log('?? Bitcoin Price:', price);\n\nif (price > 50000) {\n  return {\n    json: {\n      fromEmail: fromEmail,\n      toEmail: toEmail,\n      subject: '?? BITCOIN PRICE ALERT - $' + price,\n      message: '<h2>Bitcoin Price Alert</h2><p>Bitcoin price is currently <strong>HIGH</strong>!</p><ul><li>?? Price: $' + price + '</li><li>?? Status: ABOVE $50,000</li><li>? Time: ' + timestamp + '</li></ul><p>Consider monitoring the market closely.</p>',\n      emailFormat: 'html',\n      status: 'high_alert',\n      price: price,\n      timestamp: timestamp\n    }\n  };\n} else {\n  return {\n    json: {\n      fromEmail: fromEmail,\n      toEmail: toEmail,\n      subject: '?? Bitcoin Price Update - $' + price,\n      message: '<h2>Bitcoin Price Update</h2><p>Bitcoin price is within normal range.</p><ul><li>?? Price: $' + price + '</li><li>?? Status: BELOW $50,000</li><li>? Time: ' + timestamp + '</li></ul><p>No immediate action needed.</p>',\n      emailFormat: 'html',\n      status: 'normal',\n      price: price,\n      timestamp: timestamp\n    }\n  };\n}"
       },
       "id": "668c3478-13e7-43be-a39a-bcdf155385b6",
       "name": "Check Price & Create Message",
@@ -46,15 +52,26 @@
       "position": [672, 0],
       "credentials": {
         "smtp": {
-          "id": "placeholder",
+          "id": "{{smtpCredentialId}}",
           "name": "SMTP account"
         }
       }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { \"success\": true, \"message\": \"Bitcoin alert sent!\", \"price\": $json.price, \"status\": $json.status } }}"
+      },
+      "id": "response-node",
+      "name": "Webhook Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [896, 0]
     }
   ],
   "pinData": {},
   "connections": {
-    "Manual Trigger": {
+    "Webhook Trigger": {
       "main": [
         [
           {
@@ -81,6 +98,17 @@
         [
           {
             "node": "Send Email Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Alert": {
+      "main": [
+        [
+          {
+            "node": "Webhook Response",
             "type": "main",
             "index": 0
           }
