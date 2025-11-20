@@ -1,0 +1,49 @@
+
+/* Custom Flow Styles */
+.minimap-node-trigger {
+  background-color: rgba(133, 85, 255, 0.8);
+}
+
+.minimap-node-condition {
+  background-color: rgba(255, 170, 0, 0.8);
+}
+
+.minimap-node-action {
+  background-color: rgba(0, 136, 255, 0.8);
+}
+
+.react-flow__node {
+  border-radius: 8px;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+}
+
+.react-flow__edge-path {
+  stroke-width: 2;
+}
+
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+/* Custom scrollbar for sidebar */
+.workflow-sidebar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.workflow-sidebar::-webkit-scrollbar-track {
+  background: #f1f1f1;
+}
+
+.workflow-sidebar::-webkit-scrollbar-thumb {
+  background: #c5c5c5;
+  border-radius: 3px;
+}
+
+.workflow-sidebar::-webkit-scrollbar-thumb:hover {
+  background: #a5a5a5;
+}

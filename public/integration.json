@@ -1,0 +1,193 @@
+{
+  "integrations": [
+    {
+      "id": "salesforce",
+      "name": "Salesforce",
+      "description": "CRM Integration for sales automation and customer data management. Connects your CRM with OmniSight to synchronize customer data, sales pipelines, and campaign performance metrics.",
+      "status": "active",
+      "logoSrc": "https://resources.alphalogix.tech/assets/logos/salesforce.png",
+      "lastSync": "2024-01-15T10:30:00.000Z",
+      "dataPoints": 487521,
+      "connectionType": "OAuth 2.0",
+      "healthScore": 95,
+      "dataFlow": {
+        "incoming": 12500,
+        "outgoing": 8300
+      },
+      "category": "crm",
+      "syncFrequency": "hourly",
+      "enableNotifications": true,
+      "enableDataValidation": true,
+      "tags": ["crm", "sales", "automation"],
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    },
+    {
+      "id": "google-analytics",
+      "name": "Google Analytics",
+      "description": "Web Analytics platform for tracking website performance and user behavior. Integrates website traffic metrics, conversion data, and user engagement statistics with your OmniSight dashboards.",
+      "status": "syncing",
+      "logoSrc": "https://resources.alphalogix.tech/assets/logos/google-analytics.png",
+      "lastSync": "2024-01-15T08:30:00.000Z",
+      "dataPoints": 1245890,
+      "connectionType": "API Key",
+      "healthScore": 88,
+      "syncProgress": 65,
+      "dataFlow": {
+        "incoming": 25600,
+        "outgoing": 15200
+      },
+      "category": "marketing",
+      "syncFrequency": "daily",
+      "enableNotifications": true,
+      "enableDataValidation": true,
+      "tags": ["analytics", "marketing", "web"],
+      "createdAt": "2024-01-02T00:00:00.000Z"
+    },
+    {
+      "id": "hubspot",
+      "name": "Hubspot",
+      "description": "Marketing Automation for inbound marketing, sales, and customer service. This connector provides real-time synchronization of marketing campaign data, lead generation metrics, and customer engagement insights.",
+      "status": "failed",
+      "logoSrc": "https://resources.alphalogix.tech/assets/logos/hubspot.png",
+      "lastSync": "2024-01-14T10:30:00.000Z",
+      "dataPoints": 256437,
+      "connectionType": "OAuth 2.0",
+      "healthScore": 45,
+      "dataFlow": {
+        "incoming": 0,
+        "outgoing": 0
+      },
+      "category": "marketing",
+      "syncFrequency": "hourly",
+      "enableNotifications": true,
+      "enableDataValidation": true,
+      "tags": ["marketing", "automation", "inbound"],
+      "createdAt": "2024-01-03T00:00:00.000Z"
+    },
+    {
+      "id": "slack",
+      "name": "Slack",
+      "description": "Team Communication platform for real-time messaging and collaboration. Enables automated notifications, alert distribution, and cross-team collaboration features directly integrated with OmniSight workflows.",
+      "status": "inactive",
+      "logoSrc": "https://resources.alphalogix.tech/assets/logos/slack.png",
+      "lastSync": "2024-01-08T10:30:00.000Z",
+      "dataPoints": 43850,
+      "connectionType": "OAuth App",
+      "healthScore": 0,
+      "dataFlow": {
+        "incoming": 0,
+        "outgoing": 0
+      },
+      "category": "communication",
+      "syncFrequency": "realtime",
+      "enableNotifications": false,
+      "enableDataValidation": true,
+      "tags": ["communication", "collaboration", "notifications"],
+      "createdAt": "2024-01-04T00:00:00.000Z"
+    },
+    {
+      "id": "microsoft-teams",
+      "name": "Microsoft Teams",
+      "description": "Enterprise Collaboration platform for chat, meetings, and file sharing. This integration provides seamless sharing of OmniSight reports, alerts, and collaborative decision-making tools within your Teams workspaces.",
+      "status": "active",
+      "logoSrc": "https://resources.alphalogix.tech/assets/logos/teams.png",
+      "lastSync": "2024-01-15T09:30:00.000Z",
+      "dataPoints": 128764,
+      "connectionType": "Microsoft Graph API",
+      "healthScore": 92,
+      "dataFlow": {
+        "incoming": 5400,
+        "outgoing": 3200
+      },
+      "category": "communication",
+      "syncFrequency": "realtime",
+      "enableNotifications": true,
+      "enableDataValidation": true,
+      "tags": ["communication", "enterprise", "collaboration"],
+      "createdAt": "2024-01-05T00:00:00.000Z"
+    },
+    {
+      "id": "aws",
+      "name": "AWS",
+      "description": "Cloud infrastructure services for computing, storage and databases. Connects your AWS services with OmniSight for monitoring infrastructure costs, resource utilization, and operational performance.",
+      "status": "active",
+      "logoSrc": "https://resources.alphalogix.tech/assets/logos/aws.png",
+      "lastSync": "2024-01-15T10:00:00.000Z",
+      "dataPoints": 894320,
+      "connectionType": "IAM Role",
+      "healthScore": 90,
+      "dataFlow": {
+        "incoming": 18900,
+        "outgoing": 12100
+      },
+      "category": "infrastructure",
+      "syncFrequency": "hourly",
+      "enableNotifications": true,
+      "enableDataValidation": true,
+      "tags": ["cloud", "infrastructure", "aws"],
+      "createdAt": "2024-01-06T00:00:00.000Z"
+    }
+  ],
+  "categories": [
+    {
+      "id": "all",
+      "name": "Show All",
+      "icon": "Grid3X3",
+      "color": "text-gray-600",
+      "bgColor": "bg-gray-50",
+      "count": 6
+    },
+    {
+      "id": "crm",
+      "name": "CRM & Sales",
+      "icon": "Building2",
+      "color": "text-blue-600",
+      "bgColor": "bg-blue-50",
+      "count": 1,
+      "popular": true
+    },
+    {
+      "id": "marketing",
+      "name": "Marketing",
+      "icon": "TrendingUp",
+      "color": "text-green-600",
+      "bgColor": "bg-green-50",
+      "count": 2,
+      "recommended": true
+    },
+    {
+      "id": "finance",
+      "name": "Finance",
+      "icon": "DollarSign",
+      "color": "text-yellow-600",
+      "bgColor": "bg-yellow-50",
+      "count": 0
+    },
+    {
+      "id": "hr",
+      "name": "HR & People",
+      "icon": "Users",
+      "color": "text-purple-600",
+      "bgColor": "bg-purple-50",
+      "count": 0
+    },
+    {
+      "id": "communication",
+      "name": "Communication",
+      "icon": "MessageSquare",
+      "color": "text-pink-600",
+      "bgColor": "bg-pink-50",
+      "count": 2,
+      "popular": true
+    },
+    {
+      "id": "infrastructure",
+      "name": "Infrastructure",
+      "icon": "Cloud",
+      "color": "text-gray-600",
+      "bgColor": "bg-gray-50",
+      "count": 1
+    }
+  ],
+  "lastUpdated": "2024-01-15T10:30:00.000Z"
+} 
