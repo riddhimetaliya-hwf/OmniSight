@@ -52,7 +52,7 @@
       "position": [672, 0],
       "credentials": {
         "smtp": {
-          "id": "{{smtpCredentialId}}",
+          "id": "1",
           "name": "SMTP account"
         }
       }

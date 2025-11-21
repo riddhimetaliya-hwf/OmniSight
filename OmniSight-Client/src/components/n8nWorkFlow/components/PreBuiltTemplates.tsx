@@ -41,7 +41,8 @@ import {
   Coffee,
 } from "lucide-react";
 
-// Updated interface for WorkflowTemplate data (from /api/workflow-templates)
+// ===== INTERFACES =====
+
 interface WorkflowTemplate {
   id: string;
   name: string;
@@ -57,7 +58,6 @@ interface WorkflowTemplate {
   updatedAt: string;
 }
 
-// Frontend Workflow interface that matches your existing structure
 interface Workflow {
   id: number;
   name: string;
@@ -71,7 +71,6 @@ interface Workflow {
   _originalTemplate?: WorkflowTemplate;
 }
 
-// Interface for dynamic user inputs
 interface WorkflowInput {
   type: 'credential' | 'parameter';
   nodeName: string;
@@ -80,9 +79,9 @@ interface WorkflowInput {
   required: boolean;
   inputType: 'text' | 'email' | 'password' | 'url' | 'number' | 'textarea';
   description?: string;
+  credentialType?: string;
 }
 
-// FIXED: Interface for execution status - executionId is now a number (BIGINT)
 interface ExecutionStatus {
   id: string;
   status: string;
@@ -91,12 +90,10 @@ interface ExecutionStatus {
   stoppedAt?: string;
 }
 
-// Interface for node parameters
 interface NodeParameters {
   [key: string]: unknown;
 }
 
-// Interface for workflow node
 interface WorkflowNode {
   type: string;
   name?: string;
@@ -105,20 +102,20 @@ interface WorkflowNode {
   [key: string]: unknown;
 }
 
-// Interface for workflow JSON
 interface WorkflowJson {
   nodes?: WorkflowNode[];
   [key: string]: unknown;
 }
 
-// Interface for create workflow response
 interface CreateWorkflowResponse {
   workflowName: string;
   n8nWorkflowId: string;
   status: string;
-  executionId?: string; // This is now a BIGINT as string from backend
+  executionId?: string;
   createdAt: string;
 }
+
+// ===== CONSTANTS =====
 
 const categoryIcons: Record<string, LucideIcon> = {
   "crypto": Rocket,
@@ -162,157 +159,260 @@ const categoryIcons: Record<string, LucideIcon> = {
   "Food": Coffee,
 };
 
-// FIXED: Enhanced function to extract ALL user inputs from workflow
-const extractUserInputsFromWorkflow = (templateJson: string): WorkflowInput[] => {
-  try {
-    const workflow: WorkflowJson = JSON.parse(templateJson);
-    const inputs: WorkflowInput[] = [];
-    
-    if (workflow.nodes) {
-      workflow.nodes.forEach((node: WorkflowNode) => {
-        const nodeName = node.name || node.type.replace('n8n-nodes-base.', '');
-        
-        // 1. Extract credentials
-        if (node.credentials && typeof node.credentials === 'object') {
-          Object.keys(node.credentials).forEach(credType => {
-            inputs.push({
-              type: 'credential',
-              nodeName,
-              field: credType,
-              required: true,
-              inputType: 'password',
-              description: `Credentials for ${credType}`
-            });
-          });
-        }
-        
-        // 2. Extract parameters that need user input
-        if (node.parameters && typeof node.parameters === 'object') {
-          extractParametersFromObject(node.parameters, nodeName, inputs);
-        }
+const USER_CONFIGURABLE_NODE_TYPES = [
+  'n8n-nodes-base.emailSend',
+  'n8n-nodes-base.httpRequest',
+  'n8n-nodes-base.webhook',
+  'n8n-nodes-base.slack',
+  'n8n-nodes-base.telegram',
+  'n8n-nodes-base.discord',
+  'n8n-nodes-base.twilio',
+  'n8n-nodes-base.sendGrid',
+  'n8n-nodes-base.sms',
+];
 
-        // 3. Special handling for email nodes - extract email fields
-        if (node.type === 'n8n-nodes-base.emailSend') {
-          // Add fromEmail field
-          inputs.push({
-            type: 'parameter',
-            nodeName: 'Send Email',
-            field: 'fromEmail',
-            value: (node.parameters as NodeParameters)?.fromEmail as string || '',
-            required: true,
-            inputType: 'email',
-            description: 'Sender email address'
-          });
-          
-          // Add toEmail field  
-          inputs.push({
-            type: 'parameter',
-            nodeName: 'Send Email',
-            field: 'toEmail',
-            value: (node.parameters as NodeParameters)?.toEmail as string || '',
-            required: true,
-            inputType: 'email',
-            description: 'Recipient email address'
-          });
+/**
+ * List of node types to EXCLUDE from processing (non-executable nodes)
+ */
+const EXCLUDED_NODE_TYPES = [
+  'n8n-nodes-base.stickyNote',
+  'n8n-nodes-base.comment',
+  'n8n-nodes-base.noOp',
+  // Add other non-executable node types as needed
+];
 
-          // Add emailFormat field with proper default
-          inputs.push({
-            type: 'parameter',
-            nodeName: 'Send Email',
-            field: 'emailFormat',
-            value: 'html', // Default to 'html' instead of empty
-            required: false,
-            inputType: 'text',
-            description: 'Email format (html or text) - default: html'
-          });
-        }
-      });
-    }
-    
-    return inputs;
-  } catch (error) {
-    console.error('Error parsing workflow JSON for user inputs:', error);
-    return [];
-  }
+/**
+ * List of INTERNAL workflow parameters that should NEVER be shown to users
+ * These are common across ALL workflows
+ */
+const UNIVERSAL_INTERNAL_PARAMETERS = [
+  // HTTP/API configuration
+  'url', 'endpoint', 'path', 'httpmethod', 'method', 'apikey', 'baseurl',
+  // Email content (usually pre-defined in workflows)
+  'subject', 'message', 'body', 'content', 'html', 'text',
+  // Format and technical settings
+  'emailformat', 'format', 'responsebody', 'responsemode', 'responsedata',
+  'options', 'operation', 'resource', 'authentication', 'headers',
+  // Webhook/Trigger settings
+  'webhookid', 'responsemode', 'triggertimes', 'cron', 'interval',
+  'timezone', 'executeonce', 'mode',
+  // System/technical fields
+  'id', 'type', 'position', 'typeversion', 'color', 'width', 'height',
+  'functioncode', 'jscode', 'code', 'js', 'query', 'filters',
+  // Fixed/common values in workflows
+  'bitcoin', 'usd', 'price', 'timestamp', 'status', 'limit', 'returnall',
+  'calendar', 'documentid', 'sheetname', 'spreadsheetid', 'driveid',
+  'channelid', 'workspaceid', 'folderid', 'fileid'
+];
+
+/**
+ * List of USER-CONFIGURABLE parameters that should ALWAYS be shown
+ * These take priority over internal parameter detection
+ */
+const USER_CONFIGURABLE_PARAMETERS = [
+  'email', 'fromemail', 'toemail', 'sendto', 'recipient', 'sender',
+  'phonenumber', 'phone', 'number',
+  'name', 'username', 'userid', 'customerid', 'orderid', 'productid',
+  'address', 'city', 'country', 'zipcode', 'postalcode',
+  'amount', 'price', 'quantity', 'value',
+  'search', 'searchterm', 'keyword', 'query', 'filter', 'criteria',
+  'prompt', 'question', 'title', 'description'
+];
+
+/**
+ * Patterns that indicate INTERNAL workflow logic (not user input)
+ */
+const INTERNAL_LOGIC_PATTERNS = [
+  // API endpoints and URLs
+  /https?:\/\/[^\s]+/,
+  /api\./,
+  /\.com/,
+  /\.org/,
+  /\.io/,
+  // Pre-defined content patterns
+  /alert/i,
+  /notification/i,
+  /update/i,
+  /report/i,
+  /webhook/i,
+  /trigger/i,
+  /^\{\{.*\}\}$/, // n8n expressions
+  /^=.*$/, // n8n expressions
+  /^\/.*$/, // URL paths
+  /^[A-Z_]+$/, // CONSTANT_CASE
+];
+
+const SYSTEM_FIELDS_BLACKLIST = [
+  'options', 'operation', 'resource', 'returnAll', 'limit', 'filters',
+  'additionalFields', 'updateFields', 'conditions', 'rules',
+  'calendar', 'documentId', 'sheetName', 'spreadsheetId', 'driveId',
+  'folderId', 'fileId', 'channelId', 'workspaceId',
+  'webhookId', 'executeOnce', 'alwaysOutputData', 'noticeNoData',
+  'continueOnFail', 'retryOnFail', 'waitBetweenTries',
+  'triggerTimes', 'timeZone', 'interval', 'cronExpression',
+  'executeAt', 'executeOnce', 'mode',
+  'id', 'type', 'position', 'typeVersion', 'name', 'color', 'width', 'height',
+  'timeMin', 'timeMax', 'timeAfter', 'timeBefore',
+  'respondWith', 'responseBody', 'responseMode', 'responseData',
+  'functionCode', 'jsCode', 'code',
+];
+
+const USER_INPUT_FIELD_WHITELIST = [
+  'email', 'fromemail', 'toemail', 'sendto', 'recipient', 'sender',
+  'subject', 'message', 'body', 'text', 'content', 'html',
+  'chatid', 'channel', 'username', 'phonenumber', 'phone',
+  'url', 'endpoint', 'path', 'query', 'payload', 'data',
+  'method', 'headers', 'authentication',
+  'title', 'description', 'name', 'value', 'prompt', 'question',
+  'search', 'searchterm', 'keyword', 'filter', 'criteria',
+  'apikey', 'token', 'secret', 'password', 'username', 'key',
+  'clientid', 'clientsecret', 'accesstoken', 'refreshtoken',
+];
+
+// ===== HELPER FUNCTIONS =====
+
+const shouldExcludeNode = (nodeType: string): boolean => {
+  return EXCLUDED_NODE_TYPES.some(excludedType => 
+    nodeType.includes(excludedType.replace('n8n-nodes-base.', '')) || 
+    nodeType === excludedType
+  );
 };
 
-// Helper function to recursively extract parameters
-const extractParametersFromObject = (obj: NodeParameters, nodeName: string, inputs: WorkflowInput[], path: string = ''): void => {
-  Object.keys(obj).forEach(key => {
-    const fullPath = path ? `${path}.${key}` : key;
-    const value = obj[key];
+const shouldExcludeParameter = (fieldName: string, nodeType: string, value?: string): boolean => {
+  const lowerField = fieldName.toLowerCase();
+  const lowerNodeType = nodeType.toLowerCase();
+
+  if (USER_CONFIGURABLE_PARAMETERS.some(userParam => 
+    lowerField === userParam.toLowerCase() || 
+    lowerField.includes(userParam.toLowerCase())
+  )) {
+    return false;
+  }
+
+  if (UNIVERSAL_INTERNAL_PARAMETERS.some(internalParam => 
+    lowerField === internalParam.toLowerCase() || 
+    lowerField.includes(internalParam.toLowerCase())
+  )) {
+    return true;
+  }
+
+  if (value && typeof value === 'string') {
+    const hasInternalLogic = INTERNAL_LOGIC_PATTERNS.some(pattern => 
+      pattern.test(value)
+    );
     
-    // Check if this is a user input field
-    if (shouldExtractAsUserInput(key, value)) {
-      const inputType = determineInputType(key, value);
-      
-      inputs.push({
-        type: 'parameter',
-        nodeName,
-        field: fullPath,
-        value: typeof value === 'string' ? value : undefined,
-        required: true,
-        inputType,
-        description: generateParameterDescription(key, value, nodeName)
-      });
+    if (hasInternalLogic) {
+      return true;
     }
-    
-    // Recursively check nested objects
-    if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-      extractParametersFromObject(value as NodeParameters, nodeName, inputs, fullPath);
+  }
+ 
+  if (lowerNodeType.includes('webhook')) {
+    const webhookInternalFields = ['path', 'httpmethod', 'responsemode', 'options'];
+    if (webhookInternalFields.some(field => lowerField.includes(field))) {
+      return true;
     }
-  });
+  }
+  
+  if (lowerNodeType.includes('http') || lowerNodeType.includes('api')) {
+    const httpInternalFields = ['url', 'method', 'authentication', 'headers', 'qs'];
+    if (httpInternalFields.some(field => lowerField.includes(field))) {
+      return true;
+    }
+  }
+  
+  if (lowerNodeType.includes('email') || lowerNodeType.includes('smtp')) {
+    const emailInternalFields = ['subject', 'message', 'body', 'html', 'text'];
+    if (emailInternalFields.some(field => lowerField.includes(field))) {
+      if (value && (
+        value.includes('{{') || 
+        value.includes('Alert') ||
+        value.includes('Notification') ||
+        value.length > 100 
+      )) {
+        return true;
+      }
+    }
+  }
+
+  const isLikelyUserField = USER_INPUT_FIELD_WHITELIST.some(
+    field => lowerField.includes(field.toLowerCase())
+  );
+  
+  if (!isLikelyUserField) {
+    return true;
+  }
+  return false;
 };
 
-// FIXED: Better field detection to avoid mixing email format with email addresses
-const shouldExtractAsUserInput = (key: string, value: unknown): boolean => {
-  const keyLower = key.toLowerCase();
+const isLikelyUserInputField = (fieldName: string): boolean => {
+  const lowerField = fieldName.toLowerCase();
   
-  // Skip n8n expressions (they start with = or {{)
-  if (typeof value === 'string' && (value.startsWith('=') || value.includes('{{'))) {
-    return false;
-  }
-  
-  // Skip empty objects/arrays
-  if (value === null || value === undefined || value === '') {
-    return false;
-  }
-  
-  // Skip n8n-specific fields
-  const skipFields = ['options', 'rule', 'interval', 'position', 'id', 'type', 'webhookId', 'executeOnce', 'alwaysOutputData'];
-  if (skipFields.includes(keyLower)) {
-    return false;
-  }
-  
-  // Include common input fields
-  const inputFields = [
-    'email', 'fromemail', 'toemail', 'subject', 'message', 'body', 'content', 'text',
-    'url', 'username', 'password', 'apikey', 'token', 'secret', 'key',
-    'name', 'title', 'description', 'phone', 'address', 'city', 'country',
-    'channel', 'query', 'limit', 'offset', 'filter', 'search', 'prompt',
-    'temperature', 'maxtokens', 'model', 'endpoint', 'method', 'headers'
+  const userFieldPatterns = [
+    'email', 'from', 'to', 'subject', 'message', 'body', 'content',
+    'name', 'phone', 'address', 'city', 'country', 'url', 'title',
+    'description', 'text', 'value', 'amount', 'price', 'quantity',
+    'username', 'userid', 'customerid', 'orderid', 'productid'
   ];
   
-  return inputFields.some(field => keyLower.includes(field));
+  return userFieldPatterns.some(pattern => lowerField.includes(pattern));
 };
 
-// FIXED: Better input type detection to prevent email format being treated as email
+const scanForExpressionReferences = (
+  obj: any,
+  references: Set<string>,
+  depth: number = 0
+): void => {
+  if (depth > 5) return;
+  
+  if (typeof obj === 'string') {
+    const patterns = [
+      /\{\{\s*\$json\.(\w+)\s*\}\}/g,
+      /=\{\{\s*\$json\.(\w+)\s*\}\}/g,
+      /\{\{\s*\$json\["(\w+)"\]\s*\}\}/g,
+      /=\{\{\s*\$json\["(\w+)"\]\s*\}\}/g,
+    ];
+    
+    patterns.forEach(pattern => {
+      let match;
+      while ((match = pattern.exec(obj)) !== null) {
+        const fieldName = match[1];
+        if (isLikelyUserInputField(fieldName)) {
+          references.add(fieldName);
+        }
+      }
+    });
+  } else if (typeof obj === 'object' && obj !== null) {
+    Object.values(obj).forEach(value => {
+      scanForExpressionReferences(value, references, depth + 1);
+    });
+  }
+};
+
+const determineInputTypeFromFieldName = (fieldName: string): 'text' | 'email' | 'password' | 'url' | 'number' | 'textarea' => {
+  const lower = fieldName.toLowerCase();
+  
+  if (lower.includes('email')) return 'email';
+  if (lower.includes('password') || lower.includes('secret')) return 'password';
+  if (lower.includes('url') || lower.includes('link')) return 'url';
+  if (lower.includes('phone') || lower.includes('amount') || lower.includes('price') || lower.includes('quantity')) return 'number';
+  if (lower.includes('message') || lower.includes('body') || lower.includes('content') || lower.includes('description')) return 'textarea';
+  
+  return 'text';
+};
+
 const determineInputType = (key: string, value: unknown): 'text' | 'email' | 'password' | 'url' | 'number' | 'textarea' => {
   const keyLower = key.toLowerCase();
   
-  // CRITICAL FIX: emailFormat should be text, NOT email
   if (keyLower.includes('format')) return 'text';
-  
   if (keyLower.includes('email') && !keyLower.includes('format')) return 'email';
   if (keyLower.includes('password') || keyLower.includes('secret') || keyLower.includes('key') || keyLower.includes('token')) return 'password';
-  if (keyLower.includes('url')) return 'url';
+  if (keyLower.includes('url') || keyLower.includes('endpoint')) return 'url';
   if (keyLower.includes('phone') || keyLower.includes('number') || keyLower.includes('limit') || keyLower.includes('temperature')) return 'number';
   if (keyLower.includes('message') || keyLower.includes('body') || keyLower.includes('content') || keyLower.includes('description') || keyLower.includes('prompt')) return 'textarea';
   
   return 'text';
 };
 
-// Add this near your other helper functions
 const formatFieldName = (field: string) => {
   return field
     .replace(/([A-Z])/g, ' $1')
@@ -324,7 +424,6 @@ const formatFieldName = (field: string) => {
     .replace('.', ' - ');
 };
 
-// FIXED: Better placeholder generation
 const getPlaceholder = (input: WorkflowInput) => {
   if (input.value && !input.value.startsWith('=') && !input.value.includes('{{')) {
     return input.value;
@@ -336,12 +435,11 @@ const getPlaceholder = (input: WorkflowInput) => {
   if (field.includes('url')) return `https://api.example.com/endpoint`;
   if (field.includes('subject')) return `Email subject`;
   if (field.includes('message') || field.includes('body')) return `Enter your message content`;
-  if (field.includes('format')) return `html`; // Specific placeholder for format fields
+  if (field.includes('format')) return `html`;
   
   return `Enter ${formatFieldName(input.field)}`;
 };
 
-// Generate description for parameter fields
 const generateParameterDescription = (key: string, value: unknown, nodeName: string): string => {
   const keyFormatted = key.replace(/([A-Z])/g, ' $1').replace(/^./, str => str.toUpperCase());
   
@@ -352,12 +450,204 @@ const generateParameterDescription = (key: string, value: unknown, nodeName: str
   return `${keyFormatted} for ${nodeName}`;
 };
 
-// Separate functions for credentials and parameters (for backward compatibility)
+const extractUserParametersFromObject = (
+  obj: NodeParameters, 
+  nodeName: string, 
+  inputs: WorkflowInput[], 
+  nodeType: string,
+  path: string = '',
+  expressionReferences?: Set<string>
+): void => {
+  Object.keys(obj).forEach(key => {
+    const fullPath = path ? `${path}.${key}` : key;
+    const value = obj[key];
+    const keyLower = key.toLowerCase();
+    
+    if (shouldExcludeParameter(fullPath, nodeType, typeof value === 'string' ? value : undefined)) {
+      return;
+    }
+    
+    if (SYSTEM_FIELDS_BLACKLIST.some(field => keyLower === field.toLowerCase())) {
+      return;
+    }
+    
+    if (expressionReferences && expressionReferences.has(key)) {
+      return;
+    }
+    
+    if (typeof value === 'object' && value !== null && '__rl' in value) {
+      return;
+    }
+    
+    if (typeof value === 'string') {
+      const isExpression = value.startsWith('=') || value.includes('{{');
+      
+      if (isExpression) {
+        return;
+      }
+      
+      const inputType = determineInputType(key, value);
+      
+      inputs.push({
+        type: 'parameter',
+        nodeName,
+        field: fullPath,
+        value: value,
+        required: false,
+        inputType,
+        description: generateParameterDescription(key, value, nodeName)
+      });
+    }
+    
+    if (typeof value === 'object' && value !== null && !Array.isArray(value) && !('__rl' in value)) {
+      extractUserParametersFromObject(
+        value as NodeParameters, 
+        nodeName, 
+        inputs, 
+        nodeType,
+        fullPath,
+        expressionReferences
+      );
+    }
+  });
+};
+
+const extractCredentialDetails = (templateJson: string): { 
+  credentials: string[];
+  credentialNodes: Record<string, string[]>; 
+} => {
+  try {
+    const workflow: WorkflowJson = JSON.parse(templateJson);
+    const credentials: Set<string> = new Set();
+    const credentialNodes: Record<string, string[]> = {};
+    
+    if (!workflow.nodes) return { credentials: [], credentialNodes: {} };
+    
+    workflow.nodes.forEach((node: WorkflowNode) => {
+      if (node.credentials && typeof node.credentials === 'object') {
+        Object.entries(node.credentials).forEach(([credentialType, credentialData]) => {
+          const credentialName = (credentialData as any)?.name || credentialType;
+
+          credentials.add(credentialName);
+          if (!credentialNodes[credentialName]) {
+            credentialNodes[credentialName] = [];
+          }
+          credentialNodes[credentialName].push(node.name || node.type.replace('n8n-nodes-base.', ''));
+        });
+      }
+    });
+    
+    return {
+      credentials: Array.from(credentials),
+      credentialNodes
+    };
+  } catch (error) {
+    console.error('Error extracting credential details:', error);
+    return { credentials: [], credentialNodes: {} };
+  }
+};
+
+const extractUniqueCredentialsFromWorkflow = (templateJson: string): string[] => {
+  const { credentials } = extractCredentialDetails(templateJson);
+  return credentials;
+};
+
+const extractUserInputsFromWorkflow = (templateJson: string): WorkflowInput[] => {
+  try {
+    const workflow: WorkflowJson = JSON.parse(templateJson);
+    const inputs: WorkflowInput[] = [];
+    const expressionReferences: Set<string> = new Set();
+    const processedCredentials = new Set<string>();
+    
+    if (!workflow.nodes) return inputs;
+    
+    const executableNodes = workflow.nodes.filter((node: WorkflowNode) => {
+      return !shouldExcludeNode(node.type);
+    });
+    
+    const hasWebhook = executableNodes.some(node => 
+      node.type === 'n8n-nodes-base.webhook'
+    );
+    
+    if (hasWebhook) {
+      executableNodes.forEach(node => {
+        if (node.parameters && typeof node.parameters === 'object') {
+          scanForExpressionReferences(node.parameters, expressionReferences);
+        }
+      });
+      
+      expressionReferences.forEach(fieldName => {
+        if (!shouldExcludeParameter(fieldName, 'webhook')) {
+          const inputType = determineInputTypeFromFieldName(fieldName);
+          inputs.push({
+            type: 'parameter',
+            nodeName: 'Webhook Payload',
+            field: fieldName,
+            required: true,
+            inputType,
+            description: `Value for ${formatFieldName(fieldName)} (sent to webhook)`
+          });
+        }
+      });
+    }
+    
+    executableNodes.forEach((node: WorkflowNode) => {
+      const nodeName = node.name || node.type.replace('n8n-nodes-base.', '');
+      
+      if (node.credentials && typeof node.credentials === 'object') {
+        Object.entries(node.credentials).forEach(([credType, credentialData]) => {
+          const credentialName = (credentialData as any)?.name || credType;
+          const credentialKey = `${credType}-${credentialName}`;
+
+          if (!processedCredentials.has(credentialKey)) {
+            processedCredentials.add(credentialKey);
+            inputs.push({
+              type: 'credential',
+              nodeName,
+              field: credentialName, 
+              required: true,
+              inputType: 'password',
+              description: `Credentials for ${credentialName}`,
+              credentialType: credType
+            });
+          }
+        });
+      }
+    });
+    
+    // Process parameters
+    executableNodes.forEach((node: WorkflowNode) => {
+      const nodeName = node.name || node.type.replace('n8n-nodes-base.', '');
+      const nodeType = node.type;
+      
+      if (node.parameters && typeof node.parameters === 'object') {
+        const isUserConfigurable = USER_CONFIGURABLE_NODE_TYPES.some(
+          type => nodeType.includes(type.replace('n8n-nodes-base.', ''))
+        );
+        
+        if (isUserConfigurable) {
+          extractUserParametersFromObject(
+            node.parameters, 
+            nodeName, 
+            inputs,
+            nodeType,
+            '',
+            expressionReferences
+          );
+        }
+      }
+    });
+    
+    return inputs;
+  } catch (error) {
+    console.error('Error extracting user inputs:', error);
+    return [];
+  }
+};
+
 const extractCredentialsFromWorkflow = (templateJson: string): string[] => {
-  const inputs = extractUserInputsFromWorkflow(templateJson);
-  return inputs
-    .filter(input => input.type === 'credential')
-    .map(input => input.field);
+  const { credentials } = extractCredentialDetails(templateJson);
+  return credentials;
 };
 
 const extractParametersFromWorkflow = (templateJson: string): WorkflowInput[] => {
@@ -365,16 +655,18 @@ const extractParametersFromWorkflow = (templateJson: string): WorkflowInput[] =>
   return inputs.filter(input => input.type === 'parameter');
 };
 
-// Function to extract integrations from workflow nodes
 const extractIntegrationsFromWorkflow = (templateJson: string): string[] => {
   try {
     const workflow: WorkflowJson = JSON.parse(templateJson);
     const integrations: Set<string> = new Set();
     
     if (workflow.nodes) {
-      workflow.nodes.forEach((node: WorkflowNode) => {
+      const executableNodes = workflow.nodes.filter((node: WorkflowNode) => 
+        !shouldExcludeNode(node.type)
+      );
+      
+      executableNodes.forEach((node: WorkflowNode) => {
         if (node.type && node.type !== 'n8n-nodes-base.manualTrigger' && node.type !== 'n8n-nodes-base.scheduleTrigger') {
-          // Extract integration name from node type
           const integrationName = node.type
             .replace('n8n-nodes-base.', '')
             .replace(/([A-Z])/g, ' $1')
@@ -393,21 +685,17 @@ const extractIntegrationsFromWorkflow = (templateJson: string): string[] => {
     
     return Array.from(integrations);
   } catch (error) {
-    console.error('Error parsing workflow JSON for integrations:', error);
     return [];
   }
 };
 
-// FIXED: Check execution status using database BIGINT ID
 const checkExecutionStatus = async (executionId: number): Promise<ExecutionStatus | null> => {
   try {
-    console.log(`Checking execution status for database ID: ${executionId}`);
     
     const response = await fetch(`https://localhost:7104/api/executions/${executionId}`);
     
     if (response.ok) {
       const data = await response.json();
-      console.log(`Execution status for ${executionId}:`, data.status);
       return {
         id: data.id,
         status: data.status,
@@ -416,7 +704,6 @@ const checkExecutionStatus = async (executionId: number): Promise<ExecutionStatu
         stoppedAt: data.stoppedAt
       };
     } else {
-      console.log(`Failed to fetch execution status for ${executionId}: ${response.status}`);
       return null;
     }
   } catch (error) {
@@ -424,6 +711,8 @@ const checkExecutionStatus = async (executionId: number): Promise<ExecutionStatu
     return null;
   }
 };
+
+// ===== MAIN COMPONENT =====
 
 export const PreBuiltTemplates = () => {
   const navigate = useNavigate();
@@ -438,10 +727,9 @@ export const PreBuiltTemplates = () => {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [triggerFilter, setTriggerFilter] = useState("all");
   const [createLoading, setCreateLoading] = useState(false);
-  // FIXED: Track executions using database BIGINT IDs (as numbers)
-  const [activeExecutions, setActiveExecutions] = useState<Set<number>>(new Set());
+  const [activeExecutions, setActiveExecutions] = useState<Set<number>>( new Set());
+  const [credentialNodes, setCredentialNodes] = useState<Record<string, string[]>>({});
 
-  // Function to parse JSON arrays safely
   const parseJsonArray = (jsonString: string): string[] => {
     try {
       if (!jsonString || jsonString === "[]") return [];
@@ -452,17 +740,13 @@ export const PreBuiltTemplates = () => {
     }
   };
 
-  // Function to convert WorkflowTemplate to Workflow for frontend
   const convertToWorkflow = useCallback((template: WorkflowTemplate, index: number): Workflow => {
-    // Extract credentials and integrations from the actual workflow JSON
-    const extractedCredentials = extractCredentialsFromWorkflow(template.templateJson);
+    const { credentials: extractedCredentials } = extractCredentialDetails(template.templateJson);
     const extractedIntegrations = extractIntegrationsFromWorkflow(template.templateJson);
     
-    // Use extracted data, fallback to parsed JSON from database columns
     const integrationsArray = extractedIntegrations.length > 0 ? extractedIntegrations : parseJsonArray(template.integrations);
     const credentialsArray = extractedCredentials.length > 0 ? extractedCredentials : parseJsonArray(template.requiredCredentials);
     
-    // Combine for display
     const allIntegrations = [...new Set([...integrationsArray, ...credentialsArray])];
     
     return {
@@ -475,7 +759,6 @@ export const PreBuiltTemplates = () => {
       integrations: allIntegrations.join(', '),
       category: template.category || "automation",
       createdDate: template.createdAt || new Date().toISOString(),
-      // Store the original template for credential extraction
       _originalTemplate: template
     };
   }, []);
@@ -485,9 +768,7 @@ export const PreBuiltTemplates = () => {
       try {
         setLoading(true);
         setError(null);
-        console.log("Starting to fetch workflow templates...");
 
-        // Fetch workflow templates from your .NET API
         const response = await fetch('https://localhost:7104/api/workflow-templates');
         
         if (!response.ok) {
@@ -495,13 +776,10 @@ export const PreBuiltTemplates = () => {
         }
 
         const templatesData: WorkflowTemplate[] = await response.json();
-        console.log("Workflow templates fetched successfully:", templatesData);
         
-        // Convert templates to workflows for frontend
         const convertedWorkflows = templatesData.map(convertToWorkflow);
         setWorkflows(convertedWorkflows);
 
-        // Extract unique categories
         const uniqueCategories = Array.from(new Set(
           convertedWorkflows
             .map((w: Workflow) => w.category?.trim())
@@ -509,11 +787,9 @@ export const PreBuiltTemplates = () => {
               !!category && category.length > 0
             )
         ));
-        console.log("Categories from templates:", uniqueCategories);
         setCategories(uniqueCategories);
 
       } catch (error) {
-        console.error("Error fetching workflow templates:", error);
         setError((error as Error).message);
       } finally {
         setLoading(false);
@@ -523,7 +799,6 @@ export const PreBuiltTemplates = () => {
     fetchWorkflowTemplates();
   }, [convertToWorkflow]);
 
-  // FIXED: Poll active executions using database BIGINT IDs
   useEffect(() => {
     if (activeExecutions.size === 0) return;
 
@@ -538,11 +813,9 @@ export const PreBuiltTemplates = () => {
             newActiveExecutions.add(executionId);
           } else {
             hasChanges = true;
-            console.log(`Removing completed execution: ${executionId}`);
           }
         } catch (error) {
           console.error(`Error checking execution ${executionId}:`, error);
-          // Keep the execution in the set if there's an error (might be temporary)
           newActiveExecutions.add(executionId);
         }
       }
@@ -550,28 +823,23 @@ export const PreBuiltTemplates = () => {
       if (hasChanges) {
         setActiveExecutions(newActiveExecutions);
         
-        // Refresh the workflows list to show updated status
         if (newActiveExecutions.size === 0) {
           console.log('All executions completed!');
         }
       }
-    }, 5000); // Poll every 5 seconds
+    }, 5000);
 
     return () => clearInterval(interval);
   }, [activeExecutions]);
 
   const handleWorkflowClick = (workflow: Workflow) => {
-    console.log("Workflow clicked:", workflow.name);
     
     if (workflow._originalTemplate) {
-      // Extract fresh credentials and parameters from the template JSON
-      const credentials = extractCredentialsFromWorkflow(workflow._originalTemplate.templateJson);
+      const {credentialNodes} = extractCredentialDetails(workflow._originalTemplate.templateJson);
       const parameters = extractParametersFromWorkflow(workflow._originalTemplate.templateJson);
       const integrations = extractIntegrationsFromWorkflow(workflow._originalTemplate.templateJson);
       
-      console.log("Required credentials from workflow JSON:", credentials);
-      console.log("Required parameters from workflow JSON:", parameters);
-      console.log("Integrations from workflow JSON:", integrations);
+      setCredentialNodes(credentialNodes);
     } else {
       console.log("Required credentials:", workflow.integrations);
     }
@@ -595,183 +863,164 @@ export const PreBuiltTemplates = () => {
     });
   };
 
-  const handleCredentialsSubmit = async (
-    credentials: Record<string, any>, 
-    parameters: Record<string, string>, 
-    templateId: string, 
-    customName?: string,
-    executeImmediately?: boolean,
-    scheduleType?: string,
-    scheduledTime?: Date
-  ): Promise<boolean> => {
-    try {
-      setCreateLoading(true);
-      
-      const originalTemplate = workflows.find(w => w.id === parseInt(templateId));
-      
-      if (!originalTemplate || !originalTemplate._originalTemplate) {
-        alert('❌ Template not found. Please try again.');
-        return false;
-      }
-
-      const backendTemplateId = originalTemplate._originalTemplate.id;
-      const templateName = originalTemplate._originalTemplate.name;
-
-      console.log('🚀 Creating and executing workflow with:', {
-        backendTemplateId,
-        templateName,
-        credentials: Object.keys(credentials),
-        parameters: Object.keys(parameters),
-        executeImmediately,
-        scheduleType,
-        scheduledTime
-      });
-
-      // FIXED: Validate and clean parameters before sending
-      const cleanedParameters: Record<string, string> = { ...parameters };
-      
-      // Ensure emailFormat is valid
-      if (cleanedParameters.emailFormat && !['html', 'text'].includes(cleanedParameters.emailFormat.toLowerCase())) {
-        console.log('⚠️ Invalid emailFormat detected, setting to default "html"');
-        cleanedParameters.emailFormat = 'html';
-      } else if (!cleanedParameters.emailFormat) {
-        // Set default if not provided
-        cleanedParameters.emailFormat = 'html';
-      }
-
-      const serializedCredentials: Record<string, any> = {};
-      Object.entries(credentials).forEach(([key, value]) => {
-        serializedCredentials[key] = value;
-      });
-
-      const payload = {
-        templateId: backendTemplateId,
-        credentials: serializedCredentials,
-        parameters: cleanedParameters, // Use cleaned parameters
-        customName: customName || null,
-        executeImmediately: executeImmediately ?? true,
-        scheduleType: scheduleType || "immediate",
-        scheduledTime: scheduledTime?.toISOString() || null
-      };
-
-      console.log('📤 Sending payload to backend:', JSON.stringify(payload, null, 2));
-
-      const response = await fetch('https://localhost:7104/api/workflows/create-and-execute', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify(payload),
-      });
-
-      console.log('📡 Response status:', response.status);
-      const responseText = await response.text();
-      console.log('📄 Response body:', responseText);
-
-      if (response.ok) {
-        const result = JSON.parse(responseText);
-        console.log('✅ Workflow created:', result);
-        
-      if (result.status === "executing" && result.executionId) {
-  const executionId = parseInt(result.executionId);
   
-  if (!isNaN(executionId)) {
-    alert(
-      `✅ SUCCESS! Workflow Executing Automatically!\n\n` +
-      `📋 Workflow: ${result.workflowName}\n` +
-      `🆔 n8n Workflow ID: ${result.n8nWorkflowId}\n` +
-      `⚡ Execution ID: ${executionId}\n` +
-      `🚀 Status: Running in n8n\n\n` +
-      `🎉 The workflow has been triggered automatically!\n` +
-      `✉️ Check your email inbox for the results.\n` +
-      `📊 You can also monitor progress in the n8n dashboard at http://localhost:5678`
-    );
-    setActiveExecutions(prev => new Set(prev).add(executionId));
-  } else {
-    alert(
-      `✅ Workflow Executing!\n\n` +
-      `📋 Workflow: ${result.workflowName}\n` +
-      `🆔 n8n ID: ${result.n8nWorkflowId}\n` +
-      `🚀 The workflow is running automatically in n8n.\n\n` +
-      `✉️ Check your email inbox for results.`
-    );
-  }
-} else if (result.status === "saved_and_activated") {
-  // NEW: Handle case where workflow is activated but not immediately executed (schedule workflows)
-  alert(
-    `✅ Workflow Created & Activated!\n\n` +
-    `📋 Workflow: ${result.workflowName}\n` +
-    `🆔 n8n ID: ${result.n8nWorkflowId}\n\n` +
-    `The workflow has been created and activated in n8n.\n` +
-    `⏰ It will run automatically according to its schedule.\n\n` +
-    `📊 Monitor progress in the n8n dashboard at http://localhost:5678`
-  );
-} else if (result.status === "created_without_n8n") {
-  alert(
-    `⚠️ Workflow Saved to Database Only\n\n` +
-    `📋 Workflow: ${result.workflowName}\n\n` +
-    `n8n is currently unavailable. The workflow was saved to the database.\n` +
-    `Please ensure n8n is running at http://localhost:5678 and try again.`
-  );
-} else {
-  // Generic success for any other status
-  alert(
-    `✅ Workflow Created Successfully!\n\n` +
-    `📋 Workflow: ${result.workflowName}\n` +
-    `🆔 n8n ID: ${result.n8nWorkflowId}\n` +
-    `📊 Status: ${result.status}\n\n` +
-    `The workflow has been processed successfully.`
-  );
-}
-        setCredentialDialogOpen(false);
-        return true;
-      } else {
-        let errorMessage = 'Unknown error occurred';
+const handleCredentialsSubmit = async (
+  credentials: Record<string, any>, 
+  parameters: Record<string, string>, 
+  templateId: string, 
+  customName?: string,
+  executionMode?: string,
+  scheduledTime?: Date
+): Promise<boolean> => {
+  try {
+    setCreateLoading(true);
+    
+    const originalTemplate = workflows.find(w => w.id === parseInt(templateId));
+    
+    if (!originalTemplate || !originalTemplate._originalTemplate) {
+      alert('❌ Template not found. Please try again.');
+      return false;
+    }
+
+    const backendTemplateId = originalTemplate._originalTemplate.id;
+    const templateName = originalTemplate._originalTemplate.name;
+
+    console.log('🚀 Creating and executing workflow with:', {
+      backendTemplateId,
+      templateName,
+      credentials: Object.keys(credentials),
+      parameters: Object.keys(parameters),
+      executionMode,
+      scheduledTime: scheduledTime?.toString()
+    });
+
+    const cleanedParameters: Record<string, string> = { ...parameters };
+    
+    if (cleanedParameters.emailFormat && !['html', 'text'].includes(cleanedParameters.emailFormat.toLowerCase())) {
+      cleanedParameters.emailFormat = 'html';
+    } else if (!cleanedParameters.emailFormat) {
+      cleanedParameters.emailFormat = 'html';
+    }
+
+    const serializedCredentials: Record<string, any> = {};
+    Object.entries(credentials).forEach(([key, value]) => {
+      serializedCredentials[key] = value;
+    });
+
+    const payload: any = {
+      templateId: backendTemplateId,
+      credentials: serializedCredentials,
+      parameters: cleanedParameters,
+      customName: customName || null,
+      executionMode: executionMode || "immediate",
+      scheduleType: executionMode === "scheduled" ? "scheduled" : "immediate"
+    };
+
+    if (executionMode === "scheduled" && scheduledTime instanceof Date && !isNaN(scheduledTime.getTime())) {
+      const year = scheduledTime.getFullYear();
+      const month = String(scheduledTime.getMonth() + 1).padStart(2, '0');
+      const day = String(scheduledTime.getDate()).padStart(2, '0');
+      const hours = String(scheduledTime.getHours()).padStart(2, '0');
+      const minutes = String(scheduledTime.getMinutes()).padStart(2, '0');
+      const seconds = String(scheduledTime.getSeconds()).padStart(2, '0');
+      
+      const localTimeString = `${year}-${month}-${day}T${hours}:${minutes}:${seconds}`;
+      
+      payload.scheduledTime = localTimeString;
+      
+      console.log('📅 Time conversion:', {
+        original: scheduledTime.toString(),
+        localTimeString: localTimeString,
+        toISOString: scheduledTime.toISOString(), 
+        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone
+      });
+    }
+
+    const response = await fetch('https://localhost:7104/api/workflows/create-and-execute', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    const responseText = await response.text();
+
+    if (response.ok) {
+      const result = JSON.parse(responseText);
+      
+      // Handle different response statuses
+      if (result.status === "executing" && result.executionId) {
+        const executionId = parseInt(result.executionId);
         
-        try {
-          const errorData = JSON.parse(responseText);
-          errorMessage = errorData.detail || errorData.error || errorData.message || errorData.title || JSON.stringify(errorData);
-          console.error('❌ Server error details:', errorData);
-        } catch (parseError) {
-          errorMessage = responseText || `HTTP Error: ${response.status} - ${response.statusText}`;
-          console.error('❌ Raw error response:', responseText);
+        if (!isNaN(executionId)) {
+          alert(
+            `✅ SUCCESS! Workflow Executing Automatically!\n\n`
+          );
+          setActiveExecutions(prev => new Set(prev).add(executionId));
+        } else {
+          alert(
+            `✅ Workflow Executing!\n\n`
+          );
         }
-        
-        console.error('❌ Full error context:', {
-          status: response.status,
-          statusText: response.statusText,
-          payload: payload,
-          errorMessage: errorMessage
-        });
-        
+      } else if (result.status === "scheduled") {
         alert(
-          `❌ Failed to Create Workflow\n\n` +
-          `Error: ${errorMessage}\n\n` +
-          `Troubleshooting:\n` +
-          `1. Check if n8n is running: http://localhost:5678\n` +
-          `2. Verify API is running: https://localhost:7104\n` +
-          `3. Check console logs for details\n` +
-          `4. Ensure all credentials are correct`
+          `✅ Workflow Scheduled Successfully!\n\n`
         );
-        return false;
+      } else if (result.status === "activated") {
+        alert(
+          `✅ Workflow Activated Successfully!\n\n`
+        );
+      } else if (result.status === "saved_and_activated") {
+        alert(
+          `✅ Workflow Created & Activated!\n\n`
+        );
+      } else if (result.status === "created_without_n8n") {
+        alert(
+          `⚠️ Workflow Saved to Database Only\n\n`
+        );
+      } else {
+        alert(
+          `✅ Workflow Created Successfully!\n\n`
+        );
       }
-    } catch (error) {
-      console.error('❌ Network/Exception error:', error);
+      setCredentialDialogOpen(false);
+      return true;
+    } else {
+      let errorMessage = 'Unknown error occurred';
+      
+      try {
+        const errorData = JSON.parse(responseText);
+        errorMessage = errorData.detail || errorData.error || errorData.message || errorData.title || JSON.stringify(errorData);
+        console.error('❌ Server error details:', errorData);
+      } catch (parseError) {
+        errorMessage = responseText || `HTTP Error: ${response.status} - ${response.statusText}`;
+        console.error('❌ Raw error response:', responseText);
+      }
+      
+      console.error('❌ Full error context:', {
+        status: response.status,
+        statusText: response.statusText,
+        payload: payload,
+        errorMessage: errorMessage
+      });
+      
       alert(
-        `❌ Network Error\n\n` +
-        `${(error as Error).message}\n\n` +
-        `Troubleshooting:\n` +
-        `1. Check if the backend API is running on https://localhost:7104\n` +
-        `2. Verify your network connection\n` +
-        `3. Check browser console for more details\n` +
-        `4. Ensure CORS is properly configured`
+        `❌ Failed to Create Workflow\n\n`
       );
       return false;
-    } finally {
-      setCreateLoading(false);
     }
-  };
+  } catch (error) {
+    console.error('❌ Network/Exception error:', error);
+    alert(
+      `❌ Network Error\n\n`
+    );
+    return false;
+  } finally {
+    setCreateLoading(false);
+  }
+};
 
   const triggers = useMemo(() => {
     const trigs = Array.from(new Set(
@@ -800,7 +1049,6 @@ export const PreBuiltTemplates = () => {
   return (
     <>
       <div className="min-h-screen p-8 space-y-8 bg-canvas-bg">
-        {/* Header with Create Button */}
         <div className="flex justify-between items-center animate-fade-in">
           <div>
             <h1 className="text-4xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
@@ -822,7 +1070,6 @@ export const PreBuiltTemplates = () => {
           <CreateWorkflowButton onClick={handleCreateWorkflow} />
         </div>
 
-        {/* Search and Filters */}
         <div className="space-y-4">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-muted-foreground" />
@@ -880,7 +1127,6 @@ export const PreBuiltTemplates = () => {
           </div>
         </div>
 
-        {/* Workflow Grid */}
         {loading ? (
           <div className="flex items-center justify-center py-12">
             <div className="flex items-center space-x-2">
@@ -912,7 +1158,6 @@ export const PreBuiltTemplates = () => {
                   icon={categoryIcons[workflow.category] || Rocket}
                   category={workflow.category || "General"}
                   trigger={workflow.triggerType || "Manual"}
-                  integrations={workflow.integrations ? workflow.integrations.split(',').map(i => i.trim()) : []}
                   requiredCredentials={workflow._originalTemplate ? 
                     extractCredentialsFromWorkflow(workflow._originalTemplate.templateJson) : 
                     (workflow.integrations ? workflow.integrations.split(',').map(i => i.trim()) : [])}
@@ -932,7 +1177,6 @@ export const PreBuiltTemplates = () => {
         )}
       </div>
 
-      {/* Credential Dialog */}
       <CredentialDialog
         open={credentialDialogOpen}
         onOpenChange={setCredentialDialogOpen}
@@ -946,6 +1190,7 @@ export const PreBuiltTemplates = () => {
           (selectedWorkflow?.integrations ? selectedWorkflow.integrations.split(',').map(i => i.trim()) : [])}
         workflowInputs={selectedWorkflow?._originalTemplate ? 
           extractParametersFromWorkflow(selectedWorkflow._originalTemplate.templateJson) : []}
+        credentialNodes={credentialNodes}
         onCredentialsSubmit={handleCredentialsSubmit}
         loading={createLoading}
       />

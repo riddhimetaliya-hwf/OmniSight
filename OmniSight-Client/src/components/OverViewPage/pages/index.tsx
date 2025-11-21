@@ -86,18 +86,11 @@ const Index = () => {
   const fetchOverviewData = async () => {
     try {
       setLoading(true);
-      console.log("🔄 Fetching all overview data...");
       
       const response = await fetch(`${API_BASE_URL}/overview/all`);
       
       if (response.ok) {
         const data: OverviewData = await response.json();
-        console.log("✅ Fetched overview data:", {
-          stats: data.stats,
-          executions: data.executions.length,
-          activities: data.activities.length,
-          logs: data.logs.length
-        });
         setOverviewData(data);
         toast.success("Overview data loaded successfully");
       } else {

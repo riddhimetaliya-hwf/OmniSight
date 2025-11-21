@@ -123,6 +123,50 @@ function Get-WorkflowIcon {
     }
 }
 
+# 🆕 NEW FUNCTION: Check if workflow already exists in database
+function Test-WorkflowExists {
+    param(
+        [string]$WorkflowName,
+        [string]$WorkflowJson,
+        [System.Data.SqlClient.SqlConnection]$Connection
+    )
+    
+    try {
+        # Method 1: Check by name (exact match)
+        $queryByName = "SELECT COUNT(*) FROM [OmniSight].[dbo].[workflow_templates] WHERE [name] = @Name"
+        $commandByName = New-Object System.Data.SqlClient.SqlCommand($queryByName, $Connection)
+        $commandByName.Parameters.AddWithValue("@Name", $WorkflowName) | Out-Null
+        $countByName = [int]$commandByName.ExecuteScalar()
+        
+        if ($countByName -gt 0) {
+            Write-Host "DUPLICATE: Workflow with name '$WorkflowName' already exists" -ForegroundColor Yellow
+            return $true
+        }
+        
+        # Method 2: Check by content hash (optional - more strict duplicate detection)
+        $contentHash = (Get-FileHash -InputStream ([System.IO.MemoryStream]::new([System.Text.Encoding]::UTF8.GetBytes($WorkflowJson))) -Algorithm MD5).Hash
+        
+        $queryByHash = @"
+        SELECT COUNT(*) FROM [OmniSight].[dbo].[workflow_templates] 
+        WHERE HASHBYTES('MD5', [template_json]) = HASHBYTES('MD5', @JsonContent)
+"@
+        $commandByHash = New-Object System.Data.SqlClient.SqlCommand($queryByHash, $Connection)
+        $commandByHash.Parameters.AddWithValue("@JsonContent", $WorkflowJson) | Out-Null
+        $countByHash = [int]$commandByHash.ExecuteScalar()
+        
+        if ($countByHash -gt 0) {
+            Write-Host "DUPLICATE: Workflow with identical content already exists" -ForegroundColor Yellow
+            return $true
+        }
+        
+        return $false
+        
+    } catch {
+        Write-Host "WARNING: Could not check for duplicates: $($_.Exception.Message)" -ForegroundColor Yellow
+        return $false
+    }
+}
+
 # Function to insert workflow template into database
 function Insert-WorkflowTemplate {
     param(
@@ -134,10 +178,17 @@ function Insert-WorkflowTemplate {
         $jsonContent = Get-Content -Path $FilePath -Raw -Encoding UTF8
         $workflowData = $jsonContent | ConvertFrom-Json
         
-        $templateId = New-GuidNoDashes
         $fileName = [System.IO.Path]::GetFileNameWithoutExtension($FilePath)
-        
         $name = $workflowData.name
+        
+        # �NEW: Check for duplicates before insertion
+        if (Test-WorkflowExists -WorkflowName $name -WorkflowJson $jsonContent -Connection $Connection) {
+            Write-Host "SKIPPED: Duplicate workflow '$name' - not imported" -ForegroundColor Yellow
+            return $null
+        }
+        
+        $templateId = New-GuidNoDashes
+        
         if ($workflowData.PSObject.Properties.Name -contains "description") { 
             $description = $workflowData.description 
         } else { 
@@ -182,6 +233,28 @@ VALUES (
     } catch {
         Write-Host "ERROR: Failed to insert $FilePath : $($_.Exception.Message)" -ForegroundColor Red
         return $null
+    }
+}
+
+# 🆕 NEW FUNCTION: Get existing workflow names from database
+function Get-ExistingWorkflowNames {
+    param([System.Data.SqlClient.SqlConnection]$Connection)
+    
+    try {
+        $query = "SELECT [name] FROM [OmniSight].[dbo].[workflow_templates]"
+        $command = New-Object System.Data.SqlClient.SqlCommand($query, $Connection)
+        $reader = $command.ExecuteReader()
+        
+        $existingNames = @()
+        while ($reader.Read()) {
+            $existingNames += $reader["name"]
+        }
+        $reader.Close()
+        
+        return $existingNames
+    } catch {
+        Write-Host "WARNING: Could not fetch existing workflow names: $($_.Exception.Message)" -ForegroundColor Yellow
+        return @()
     }
 }
 
@@ -241,13 +314,30 @@ try {
     
     Write-Host "CONNECTED: Database connection successful" -ForegroundColor Green
     
+    # 🆕 NEW: Get existing workflow names for quick filtering
+    $existingWorkflowNames = Get-ExistingWorkflowNames -Connection $connection
+    Write-Host "EXISTING: $($existingWorkflowNames.Count) workflows already in database" -ForegroundColor Gray
+    
     $insertedCount = 0
     $failedCount = 0
+    $skippedCount = 0
     $insertedTemplates = @()
     
     # Process each JSON file
     foreach ($file in $jsonFiles) {
         Write-Host "PROCESSING: $($file.Name)" -ForegroundColor Gray
+        
+        # 🆕 NEW: Quick pre-check by filename/name to avoid unnecessary processing
+        $jsonContent = Get-Content -Path $file.FullName -Raw -Encoding UTF8
+        $workflowData = $jsonContent | ConvertFrom-Json
+        $workflowName = $workflowData.name
+        
+        if ($existingWorkflowNames -contains $workflowName) {
+            Write-Host "SKIPPED: '$workflowName' already exists in database" -ForegroundColor Yellow
+            $skippedCount++
+            continue
+        }
+        
         $templateId = Insert-WorkflowTemplate -FilePath $file.FullName -Connection $connection
         if ($templateId) {
             $insertedCount++
@@ -265,8 +355,9 @@ try {
     Write-Host "IMPORT SUMMARY" -ForegroundColor Cyan
     Write-Host "==================================================" -ForegroundColor Cyan
     Write-Host "SUCCESS: $insertedCount" -ForegroundColor Green
+    Write-Host "SKIPPED: $skippedCount (duplicates)" -ForegroundColor Yellow
     Write-Host "FAILED: $failedCount" -ForegroundColor Red
-    Write-Host "TOTAL: $($jsonFiles.Count)" -ForegroundColor Yellow
+    Write-Host "TOTAL: $($jsonFiles.Count)" -ForegroundColor White
     
     if ($insertedTemplates.Count -gt 0) {
         Write-Host "INSERTED TEMPLATES:" -ForegroundColor Cyan
