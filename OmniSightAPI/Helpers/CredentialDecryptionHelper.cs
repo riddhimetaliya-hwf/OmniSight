@@ -1,12 +1,15 @@
 ﻿using Dapper;
 using Microsoft.Data.SqlClient;
 using OmniSightAPI.Services;
+using Serilog;
 using System.Text.Json;
 
 namespace OmniSightAPI.Helpers
 {
     public static class CredentialDecryptionHelper
     {
+        private static readonly ILogger _logger = Log.ForContext(typeof(CredentialDecryptionHelper));
+
         public static Dictionary<string, string> DecryptSensitiveFields(
             string encryptedCredentialJson,
             IEncryptionService encryptionService)
@@ -14,6 +17,7 @@ namespace OmniSightAPI.Helpers
             var encryptedData = JsonSerializer.Deserialize<Dictionary<string, string>>(encryptedCredentialJson);
             if (encryptedData == null)
             {
+                _logger.Warning("Encrypted credential JSON is null or invalid");
                 return new Dictionary<string, string>();
             }
 
@@ -34,11 +38,11 @@ namespace OmniSightAPI.Helpers
                     try
                     {
                         decryptedData[kvp.Key] = encryptionService.Decrypt(kvp.Value);
-                        Console.WriteLine($"🔓 Decrypted field: {kvp.Key}");
+                        _logger.Debug("Decrypted sensitive field. FieldName: {FieldName}", kvp.Key);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"❌ Failed to decrypt field {kvp.Key}: {ex.Message}");
+                        _logger.Warning(ex, "Failed to decrypt field. FieldName: {FieldName}, keeping encrypted value", kvp.Key);
                         // Keep encrypted value if decryption fails (for debugging)
                         decryptedData[kvp.Key] = kvp.Value;
                     }

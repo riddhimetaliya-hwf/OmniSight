@@ -1,9 +1,12 @@
 ﻿using System.Text.Json;
+using Serilog;
 
 namespace OmniSightAPI.Helpers
 {
     public static class ParameterHelpers
     {
+        private static readonly ILogger _logger = Log.ForContext(typeof(ParameterHelpers));
+
         public static void UpdateParametersRecursive(
             JsonElement current,
             Dictionary<string, string> userParams,
@@ -18,7 +21,7 @@ namespace OmniSightAPI.Helpers
                 if (userParams.ContainsKey(fullPath))
                 {
                     result[prop.Name] = userParams[fullPath];
-                    Console.WriteLine($"📝 Set parameter {fullPath} = {userParams[fullPath]}");
+                    _logger.Debug("Set parameter. NodeName: {NodeName}, Path: {Path}", nodeName, fullPath);
                 }
                 else if (IsEmailParameter(prop.Name))
                 {
@@ -26,7 +29,8 @@ namespace OmniSightAPI.Helpers
                     if (!string.IsNullOrEmpty(matchingParam.Key))
                     {
                         result[prop.Name] = matchingParam.Value;
-                        Console.WriteLine($"📧 Set email parameter {prop.Name} = {matchingParam.Value}");
+                        _logger.Debug("Set email parameter. NodeName: {NodeName}, ParameterName: {ParameterName}",
+                            nodeName, prop.Name);
                     }
                     else
                     {
@@ -48,20 +52,22 @@ namespace OmniSightAPI.Helpers
 
         private static bool IsEmailParameter(string paramName)
         {
-            var name = paramName.ToLower();
-            return name.Contains("email") || name == "to" || name == "from";
+            var name = paramName.ToLowerInvariant();
+            return name.Contains("email", StringComparison.OrdinalIgnoreCase) || 
+                   name == "to" || 
+                   name == "from";
         }
 
         private static KeyValuePair<string, string> FindMatchingEmailParameter(
             string paramName,
             Dictionary<string, string> userParams)
         {
-            var paramKey = paramName.ToLower();
+            var paramKey = paramName.ToLowerInvariant();
 
             return userParams.FirstOrDefault(kv =>
-                kv.Key.ToLower().Contains(paramKey) ||
-                (paramKey == "from" && kv.Key.ToLower().Contains("fromemail")) ||
-                (paramKey == "to" && kv.Key.ToLower().Contains("toemail"))
+                kv.Key.Contains(paramKey, StringComparison.OrdinalIgnoreCase) ||
+                (paramKey == "from" && kv.Key.Contains("fromemail", StringComparison.OrdinalIgnoreCase)) ||
+                (paramKey == "to" && kv.Key.Contains("toemail", StringComparison.OrdinalIgnoreCase))
             );
         }
     }

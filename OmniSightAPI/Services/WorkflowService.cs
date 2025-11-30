@@ -1,4 +1,5 @@
 ﻿using System.Text.Json;
+using Serilog;
 
 namespace OmniSightAPI.Services
 {
@@ -10,10 +11,12 @@ namespace OmniSightAPI.Services
     public class WorkflowService : IWorkflowService
     {
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly ILogger _logger;
 
-        public WorkflowService(IHttpClientFactory httpClientFactory)
+        public WorkflowService(IHttpClientFactory httpClientFactory, ILogger logger)
         {
             _httpClientFactory = httpClientFactory;
+            _logger = logger;
         }
 
         public async Task<string> ExecuteWorkflowAsync(
@@ -40,9 +43,8 @@ namespace OmniSightAPI.Services
 
             try
             {
-                Console.WriteLine($"🚀 === EXECUTING WEBHOOK WORKFLOW ===");
-                Console.WriteLine($"🆔 Workflow ID: {n8nWorkflowId}");
-                Console.WriteLine($"📋 Parameters: {JsonSerializer.Serialize(parameters)}");
+                _logger.Information("Executing webhook workflow. WorkflowId: {N8nWorkflowId}, ParametersCount: {ParametersCount}",
+                    n8nWorkflowId, parameters.Count);
 
                 // STEP 1: Try to extract webhook path from workflow data
                 string webhookPath = ExtractWebhookPathFromWorkflowData(workflowData);
@@ -50,7 +52,8 @@ namespace OmniSightAPI.Services
                 // STEP 2: If not found, fetch workflow details from n8n
                 if (string.IsNullOrEmpty(webhookPath))
                 {
-                    Console.WriteLine($"💡 Path not found in provided workflow data, fetching from n8n API...");
+                    _logger.Debug("Webhook path not found in workflow data, fetching from n8n API. WorkflowId: {N8nWorkflowId}",
+                        n8nWorkflowId);
 
                     try
                     {
@@ -63,15 +66,15 @@ namespace OmniSightAPI.Services
                             JsonElement fetchedNodes;
                             if (json.TryGetProperty("data", out var data) && data.TryGetProperty("nodes", out fetchedNodes))
                             {
-                                Console.WriteLine($"✅ Found nodes inside data.nodes");
+                                _logger.Debug("Found nodes inside data.nodes");
                             }
                             else if (json.TryGetProperty("nodes", out fetchedNodes))
                             {
-                                Console.WriteLine($"✅ Found nodes at root level");
+                                _logger.Debug("Found nodes at root level");
                             }
                             else
                             {
-                                Console.WriteLine($"⚠️ No nodes found in n8n API response");
+                                _logger.Warning("No nodes found in n8n API response. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                                 fetchedNodes = default;
                             }
 
@@ -85,7 +88,8 @@ namespace OmniSightAPI.Services
                                         if (node.TryGetProperty("parameters", out var p) && p.TryGetProperty("path", out var pathProp))
                                         {
                                             webhookPath = pathProp.GetString();
-                                            Console.WriteLine($"✅ Extracted webhook path from n8n API: {webhookPath}");
+                                            _logger.Information("Extracted webhook path from n8n API. WorkflowId: {N8nWorkflowId}, Path: {WebhookPath}",
+                                                n8nWorkflowId, webhookPath);
                                             break;
                                         }
                                     }
@@ -94,24 +98,25 @@ namespace OmniSightAPI.Services
                         }
                         else
                         {
-                            Console.WriteLine($"⚠️ Failed to fetch workflow from n8n: {getResponse.StatusCode}");
+                            _logger.Warning("Failed to fetch workflow from n8n. WorkflowId: {N8nWorkflowId}, Status: {StatusCode}",
+                                n8nWorkflowId, getResponse.StatusCode);
                         }
                     }
                     catch (Exception fetchEx)
                     {
-                        Console.WriteLine($"⚠️ Exception fetching from n8n: {fetchEx.Message}");
+                        _logger.Warning(fetchEx, "Exception fetching workflow from n8n. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                     }
                 }
 
                 if (string.IsNullOrEmpty(webhookPath))
                 {
-                    Console.WriteLine($"❌ FATAL: Could not determine webhook path for workflow {n8nWorkflowId}");
+                    _logger.Error("Could not determine webhook path for workflow. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                     return null;
                 }
 
                 // Normalize path (remove leading/trailing slashes)
                 webhookPath = webhookPath.Trim('/');
-                Console.WriteLine($"✅ Using webhook path: '{webhookPath}'");
+                _logger.Debug("Using webhook path. WorkflowId: {N8nWorkflowId}, Path: {WebhookPath}", n8nWorkflowId, webhookPath);
 
                 var payload = new Dictionary<string, object>();
                 foreach (var param in parameters)
@@ -121,12 +126,14 @@ namespace OmniSightAPI.Services
                 var testWebhookUrl = $"/webhook-test/{webhookPath}";
                 var prodWebhookUrl = $"/webhook/{webhookPath}";
 
-                Console.WriteLine($"🌐 Trying test webhook: {testWebhookUrl}");
+                _logger.Debug("Trying test webhook. WorkflowId: {N8nWorkflowId}, Url: {TestWebhookUrl}",
+                    n8nWorkflowId, testWebhookUrl);
                 try
                 {
                     var testResponse = await httpClient.PostAsJsonAsync(testWebhookUrl, payload);
                     var testContent = await testResponse.Content.ReadAsStringAsync();
-                    Console.WriteLine($"📥 Test webhook response: {testResponse.StatusCode} {testContent}");
+                    _logger.Debug("Test webhook response. WorkflowId: {N8nWorkflowId}, Status: {StatusCode}",
+                        n8nWorkflowId, testResponse.StatusCode);
                     if (testResponse.IsSuccessStatusCode)
                     {
                         // Try extract executionId if returned
@@ -142,15 +149,17 @@ namespace OmniSightAPI.Services
                 }
                 catch (Exception testEx)
                 {
-                    Console.WriteLine($"⚠️ Test webhook exception: {testEx.Message}");
+                    _logger.Warning(testEx, "Test webhook exception. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 }
 
-                Console.WriteLine($"🌐 Trying production webhook: {prodWebhookUrl}");
+                _logger.Debug("Trying production webhook. WorkflowId: {N8nWorkflowId}, Url: {ProdWebhookUrl}",
+                    n8nWorkflowId, prodWebhookUrl);
                 try
                 {
                     var prodResponse = await httpClient.PostAsJsonAsync(prodWebhookUrl, payload);
                     var prodContent = await prodResponse.Content.ReadAsStringAsync();
-                    Console.WriteLine($"📥 Production response: {prodResponse.StatusCode} {prodContent}");
+                    _logger.Debug("Production webhook response. WorkflowId: {N8nWorkflowId}, Status: {StatusCode}",
+                        n8nWorkflowId, prodResponse.StatusCode);
                     if (prodResponse.IsSuccessStatusCode)
                     {
                         try
@@ -165,16 +174,16 @@ namespace OmniSightAPI.Services
                 }
                 catch (Exception prodEx)
                 {
-                    Console.WriteLine($"⚠️ Production webhook exception: {prodEx.Message}");
+                    _logger.Warning(prodEx, "Production webhook exception. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 }
 
-                Console.WriteLine($"❌ Both webhook endpoints failed for path '{webhookPath}'");
+                _logger.Error("Both webhook endpoints failed. WorkflowId: {N8nWorkflowId}, Path: {WebhookPath}",
+                    n8nWorkflowId, webhookPath);
                 return null;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ EXCEPTION in ExecuteWebhookWorkflow: {ex.Message}");
-                Console.WriteLine($"Stack: {ex.StackTrace}");
+                _logger.Error(ex, "Exception in ExecuteWebhookWorkflow. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 return null;
             }
         }
@@ -188,8 +197,8 @@ namespace OmniSightAPI.Services
 
             try
             {
-                Console.WriteLine($"🚀 Executing MANUAL trigger workflow: {n8nWorkflowId}");
-                Console.WriteLine($"📋 Parameters to pass: {JsonSerializer.Serialize(parameters)}");
+                _logger.Information("Executing manual trigger workflow. WorkflowId: {N8nWorkflowId}, ParametersCount: {ParametersCount}",
+                    n8nWorkflowId, parameters.Count);
 
                 var triggerData = new Dictionary<string, object>();
                 foreach (var param in parameters)
@@ -237,10 +246,10 @@ namespace OmniSightAPI.Services
                         }
                     };
 
-                    Console.WriteLine($"📤 Sending run payload to /api/v1/workflows/run");
+                    _logger.Debug("Sending run payload to /api/v1/workflows/run. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                     var runResponse = await httpClient.PostAsJsonAsync($"/api/v1/workflows/run", runPayload);
                     var runContent = await runResponse.Content.ReadAsStringAsync();
-                    Console.WriteLine($"📥 Run response status: {runResponse.StatusCode} body: {runContent}");
+                    _logger.Debug("Run response. WorkflowId: {N8nWorkflowId}, Status: {StatusCode}", n8nWorkflowId, runResponse.StatusCode);
 
                     if (runResponse.IsSuccessStatusCode)
                     {
@@ -254,11 +263,12 @@ namespace OmniSightAPI.Services
                         return Guid.NewGuid().ToString("N");
                     }
 
-                    Console.WriteLine($"⚠️ /run endpoint failed: {runContent}");
+                    _logger.Warning("/run endpoint failed. WorkflowId: {N8nWorkflowId}, Response: {Response}",
+                        n8nWorkflowId, runContent);
                 }
                 catch (Exception runEx)
                 {
-                    Console.WriteLine($"⚠️ /run method exception: {runEx.Message}");
+                    _logger.Warning(runEx, "/run method exception. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 }
 
                 // METHOD 2: Activate & trigger via webhook-test (fallback)
@@ -271,13 +281,14 @@ namespace OmniSightAPI.Services
                         var activateResp = await httpClient.PatchAsJsonAsync($"/api/v1/workflows/{n8nWorkflowId}", new { active = true });
                         if (activateResp.IsSuccessStatusCode)
                         {
-                            Console.WriteLine($"✅ Workflow activated for manual trigger (id: {n8nWorkflowId})");
-                            await Task.Delay(500); // let n8n initialize
+                            _logger.Information("Workflow activated for manual trigger. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
+                            await Task.Delay(500, CancellationToken.None); // let n8n initialize
 
                             var triggerUrl = $"/webhook-test/{n8nWorkflowId}";
                             var webhookResponse = await httpClient.PostAsJsonAsync(triggerUrl, triggerData);
                             var webhookContent = await webhookResponse.Content.ReadAsStringAsync();
-                            Console.WriteLine($"📥 Webhook trigger: {webhookResponse.StatusCode} body: {webhookContent}");
+                            _logger.Debug("Webhook trigger response. WorkflowId: {N8nWorkflowId}, Status: {StatusCode}",
+                                n8nWorkflowId, webhookResponse.StatusCode);
                             if (webhookResponse.IsSuccessStatusCode)
                                 return Guid.NewGuid().ToString("N");
                         }
@@ -285,7 +296,7 @@ namespace OmniSightAPI.Services
                 }
                 catch (Exception webhookEx)
                 {
-                    Console.WriteLine($"⚠️ Webhook method exception: {webhookEx.Message}");
+                    _logger.Warning(webhookEx, "Webhook method exception. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 }
 
                 // METHOD 3: Attempt direct execute endpoint
@@ -294,22 +305,23 @@ namespace OmniSightAPI.Services
                     var directPayload = new { data = new[] { new { json = triggerData } } };
                     var directResponse = await httpClient.PostAsJsonAsync($"/api/v1/workflows/{n8nWorkflowId}/execute", directPayload);
                     var directContent = await directResponse.Content.ReadAsStringAsync();
-                    Console.WriteLine($"📥 Direct execute response: {directResponse.StatusCode} body: {directContent}");
+                    _logger.Debug("Direct execute response. WorkflowId: {N8nWorkflowId}, Status: {StatusCode}",
+                        n8nWorkflowId, directResponse.StatusCode);
                     if (directResponse.IsSuccessStatusCode)
                         return Guid.NewGuid().ToString("N");
                 }
                 catch (Exception directEx)
                 {
-                    Console.WriteLine($"⚠️ Direct execution exception: {directEx.Message}");
+                    _logger.Warning(directEx, "Direct execution exception. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 }
 
-                Console.WriteLine($"ℹ️ Manual execution fallbacks exhausted; workflow ready for manual trigger in n8n UI.");
+                _logger.Information("Manual execution fallbacks exhausted. WorkflowId: {N8nWorkflowId}, workflow ready for manual trigger in n8n UI",
+                    n8nWorkflowId);
                 return null;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error executing manual workflow: {ex.Message}");
-                Console.WriteLine($"❌ Stack trace: {ex.StackTrace}");
+                _logger.Error(ex, "Error executing manual workflow. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 return null;
             }
         }
@@ -322,16 +334,17 @@ namespace OmniSightAPI.Services
 
             try
             {
-                Console.WriteLine($"🚀 Executing schedule workflow: {n8nWorkflowId}");
+                _logger.Information("Executing schedule workflow. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 var triggerData = new Dictionary<string, object>();
                 foreach (var param in parameters) triggerData[param.Key] = param.Value;
 
                 var testPayload = new { triggerData = new[] { new { json = triggerData } } };
-                Console.WriteLine($"📤 Test payload: {JsonSerializer.Serialize(testPayload)}");
+                _logger.Debug("Test payload prepared. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
 
                 var testResponse = await httpClient.PostAsJsonAsync($"/api/v1/workflows/{n8nWorkflowId}/test", testPayload);
                 var testContent = await testResponse.Content.ReadAsStringAsync();
-                Console.WriteLine($"📥 Test response: {testResponse.StatusCode} {testContent}");
+                _logger.Debug("Test response. WorkflowId: {N8nWorkflowId}, Status: {StatusCode}",
+                    n8nWorkflowId, testResponse.StatusCode);
 
                 if (testResponse.IsSuccessStatusCode)
                 {
@@ -351,7 +364,8 @@ namespace OmniSightAPI.Services
                 // fallback direct execute
                 var executeResponse = await httpClient.PostAsync($"/api/v1/workflows/{n8nWorkflowId}/execute", null);
                 var executeContent = await executeResponse.Content.ReadAsStringAsync();
-                Console.WriteLine($"📥 Direct execute: {executeResponse.StatusCode} {executeContent}");
+                _logger.Debug("Direct execute response. WorkflowId: {N8nWorkflowId}, Status: {StatusCode}",
+                    n8nWorkflowId, executeResponse.StatusCode);
                 if (executeResponse.IsSuccessStatusCode)
                 {
                     try
@@ -364,17 +378,18 @@ namespace OmniSightAPI.Services
                     return Guid.NewGuid().ToString("N");
                 }
 
-                Console.WriteLine($"ℹ️ Schedule workflow tested/activated and will run according to its schedule.");
+                _logger.Information("Schedule workflow tested/activated and will run according to its schedule. WorkflowId: {N8nWorkflowId}",
+                    n8nWorkflowId);
                 return null;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error executing schedule workflow: {ex.Message}");
+                _logger.Error(ex, "Error executing schedule workflow. WorkflowId: {N8nWorkflowId}", n8nWorkflowId);
                 return null;
             }
         }
 
-        private static string ExtractWebhookPathFromWorkflowData(Dictionary<string, object> workflowData)
+        private static string? ExtractWebhookPathFromWorkflowData(Dictionary<string, object> workflowData)
         {
             try
             {
@@ -404,7 +419,7 @@ namespace OmniSightAPI.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error extracting webhook path from workflow data: {ex.Message}");
+                Log.ForContext(typeof(WorkflowService)).Warning(ex, "Error extracting webhook path from workflow data");
             }
 
             return null;

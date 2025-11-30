@@ -1,15 +1,21 @@
 ﻿using Dapper;
+using FluentValidation;
 using Microsoft.Data.SqlClient;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using OmniSightAPI.Constants;
+using OmniSightAPI.Extensions;
+using OmniSightAPI.Helpers;
 using OmniSightAPI.Models;
 using OmniSightAPI.Services;
-using OmniSightAPI.Helpers;
+using Serilog;
 
 namespace OmniSightAPI.Endpoints
 {
     public static class WorkflowEndpoints
     {
+        private static readonly ILogger _logger = Log.ForContext(typeof(WorkflowEndpoints));
+
         public static void MapWorkflowEndpoints(this IEndpointRouteBuilder endpoints)
         {
             var group = endpoints.MapGroup("/api/workflows")
@@ -22,35 +28,49 @@ namespace OmniSightAPI.Endpoints
 
         private static async Task<IResult> CreateAndExecuteWorkflow(
             CreateWorkflowFromTemplateRequest request,
-            IHttpClientFactory httpClientFactory,
+            IValidator<CreateWorkflowFromTemplateRequest> validator,
             IConfiguration configuration,
             IN8nService n8nService,
             IWorkflowService workflowService,
             IEncryptionService encryptionService)
         {
+            // Validate request
+            var validationResult = await validator.ValidateAsync(request);
+            if (!validationResult.IsValid)
+            {
+                var errors = validationResult.Errors
+                    .GroupBy(e => e.PropertyName)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.Select(e => e.ErrorMessage).ToArray());
+                
+                return EndpointExtensions.ValidationError(errors);
+            }
+
             try
             {
-                Console.WriteLine($"🚀 Creating workflow from template: {request.TemplateId}");
-                Console.WriteLine($"🔐 Received Credentials Keys: {string.Join(", ", request.Credentials.Keys)}");
-                Console.WriteLine($"📝 Received Parameters Keys: {string.Join(", ", request.Parameters.Keys)}");
+                _logger.Information("Creating workflow from template. TemplateId: {TemplateId}, CredentialsCount: {CredentialsCount}, ParametersCount: {ParametersCount}",
+                    request.TemplateId, request.Credentials.Count, request.Parameters.Count);
 
                 var connectionString = configuration.GetConnectionString("DefaultConnection")
-                                      ?? "Server=(localdb)\\MSSQLLocalDB;Database=OmniSight;Trusted_Connection=true;TrustServerCertificate=true;";
+                                      ?? ApplicationConstants.DefaultConnectionString;
 
-                using var connection = new SqlConnection(connectionString);
+                await using var connection = new SqlConnection(connectionString);
                 await connection.OpenAsync();
 
-                var userId = await GetOrCreateDefaultUser(connection);
+                var userId = await GetOrCreateDefaultUserAsync(connection);
 
-                var template = await GetTemplate(connection, request.TemplateId);
+                var template = await GetTemplateAsync(connection, request.TemplateId);
                 if (template == null)
                 {
-                    return Results.NotFound(new { error = $"Template '{request.TemplateId}' not found" });
+                    _logger.Warning("Template not found. TemplateId: {TemplateId}", request.TemplateId);
+                    return EndpointExtensions.NotFound($"Template '{request.TemplateId}' not found");
                 }
 
-                Console.WriteLine($"✅ Template found: {template.name}");
+                _logger.Information("Template found. TemplateId: {TemplateId}, TemplateName: {TemplateName}",
+                    request.TemplateId, template.name);
 
-                var credentialMappings = await ProcessCredentials(
+                var credentialMappings = await ProcessCredentialsAsync(
                     connection,
                     request.Credentials,
                     userId,
@@ -61,7 +81,11 @@ namespace OmniSightAPI.Endpoints
 
                 if (request.Credentials.Count > 0 && credentialMappings.Count == 0)
                 {
-                    return Results.Problem("No credentials were successfully created in n8n. Cannot proceed.");
+                    _logger.Warning("No credentials were successfully created in n8n. Cannot proceed. TemplateId: {TemplateId}",
+                        request.TemplateId);
+                    return EndpointExtensions.Error(
+                        "No credentials were successfully created in n8n. Cannot proceed.",
+                        ApplicationConstants.ErrorCodes.CredentialCreationFailed);
                 }
 
                 var templateJson = template.template_json.ToString();
@@ -76,12 +100,27 @@ namespace OmniSightAPI.Endpoints
                 );
 
                 var newWorkflowId = Guid.NewGuid().ToString();
-                var workflowName = request.CustomName ?? $"{template.name} - {DateTime.Now:yyyyMMdd-HHmmss}";
+                var workflowName = request.CustomName ?? $"{template.name} - {DateTime.UtcNow:yyyyMMdd-HHmmss}";
 
-                string n8nWorkflowId = await n8nService.SaveWorkflowAsync(newWorkflow, workflowName);
-                Console.WriteLine($"✅ Workflow saved to n8n: {n8nWorkflowId}");
+                var saveResult = await n8nService.SaveWorkflowAsync(newWorkflow, workflowName);
+                var n8nWorkflowId = saveResult.WorkflowId ?? ApplicationConstants.N8nUnavailable;
+                
+                _logger.Information("Workflow saved to n8n. WorkflowId: {WorkflowId}, N8nWorkflowId: {N8nWorkflowId}, Success: {Success}",
+                    newWorkflowId, n8nWorkflowId, saveResult.Success);
+                
+                if (saveResult.Errors.Count > 0)
+                {
+                    _logger.Warning("Workflow saved with errors. WorkflowId: {WorkflowId}, Errors: {Errors}",
+                        newWorkflowId, string.Join("; ", saveResult.Errors));
+                }
+                
+                if (saveResult.Warnings.Count > 0)
+                {
+                    _logger.Information("Workflow saved with warnings. WorkflowId: {WorkflowId}, Warnings: {Warnings}",
+                        newWorkflowId, string.Join("; ", saveResult.Warnings));
+                }
 
-                await SaveWorkflowToDatabase(
+                await SaveWorkflowToDatabaseAsync(
                     connection,
                     newWorkflowId,
                     userId,
@@ -92,12 +131,12 @@ namespace OmniSightAPI.Endpoints
                     n8nWorkflowId
                 );
 
-                Console.WriteLine($"✅ Workflow saved to database: {newWorkflowId}");
+                _logger.Information("Workflow saved to database. WorkflowId: {WorkflowId}", newWorkflowId);
 
                 long? executionId = null;
-                if (!string.IsNullOrEmpty(n8nWorkflowId) && n8nWorkflowId != "n8n_unavailable")
+                if (!string.IsNullOrEmpty(n8nWorkflowId) && n8nWorkflowId != ApplicationConstants.N8nUnavailable)
                 {
-                    executionId = await ExecuteWorkflow(
+                    executionId = await ExecuteWorkflowAsync(
                         connection,
                         n8nWorkflowId,
                         newWorkflowId,
@@ -109,8 +148,11 @@ namespace OmniSightAPI.Endpoints
                     );
                 }
 
-                var responseStatus = n8nWorkflowId == "n8n_unavailable" ? "created_without_n8n" :
-                                   executionId.HasValue ? "executing" : "saved_and_activated";
+                var responseStatus = n8nWorkflowId == ApplicationConstants.N8nUnavailable 
+                    ? "created_without_n8n" 
+                    : executionId.HasValue 
+                        ? "executing" 
+                        : "saved_and_activated";
 
                 var response = new CreateWorkflowResponse
                 {
@@ -118,21 +160,25 @@ namespace OmniSightAPI.Endpoints
                     N8nWorkflowId = n8nWorkflowId ?? "not_saved_to_n8n",
                     Status = responseStatus,
                     ExecutionId = executionId?.ToString(),
-                    CreatedAt = DateTime.UtcNow
+                    CreatedAt = DateTime.UtcNow,
+                    Errors = saveResult.Errors.Count > 0 ? saveResult.Errors : null,
+                    Warnings = saveResult.Warnings.Count > 0 ? saveResult.Warnings : null
                 };
 
-                Console.WriteLine($"📤 Returning response: {JsonSerializer.Serialize(response)}");
-                return Results.Ok(response);
+                _logger.Information("Workflow creation completed. WorkflowId: {WorkflowId}, Status: {Status}, Errors: {ErrorCount}, Warnings: {WarningCount}",
+                    newWorkflowId, responseStatus, saveResult.Errors.Count, saveResult.Warnings.Count);
+                
+                return EndpointExtensions.Success(response, "Workflow created successfully");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error: {ex.Message}");
-                Console.WriteLine($"❌ Stack: {ex.StackTrace}");
-                return Results.Problem($"Error creating workflow: {ex.Message}");
+                _logger.Error(ex, "Error creating workflow from template. TemplateId: {TemplateId}",
+                    request.TemplateId);
+                return EndpointExtensions.InternalServerError($"Error creating workflow: {ex.Message}");
             }
         }
 
-        private static async Task<string> GetOrCreateDefaultUser(SqlConnection connection)
+        private static async Task<string> GetOrCreateDefaultUserAsync(SqlConnection connection)
         {
             var getUserIdSql = "SELECT TOP 1 id FROM [OmniSight].[dbo].[users] ORDER BY created_at";
             var userId = await connection.QueryFirstOrDefaultAsync<string>(getUserIdSql);
@@ -157,7 +203,7 @@ namespace OmniSightAPI.Endpoints
             return userId;
         }
 
-        private static async Task<dynamic> GetTemplate(SqlConnection connection, string templateId)
+        private static async Task<dynamic?> GetTemplateAsync(SqlConnection connection, string templateId)
         {
             var findTemplateSql = @"
                 SELECT [id], [name], [description], [template_json], [required_credentials]
@@ -173,7 +219,7 @@ namespace OmniSightAPI.Endpoints
         ///  - encrypt sensitive fields and store encrypted JSON in DB
         ///  - create credential in n8n and produce multiple mapping keys so templates can match them
         /// </summary>
-        private static async Task<Dictionary<string, string>> ProcessCredentials(
+        private static async Task<Dictionary<string, string>> ProcessCredentialsAsync(
             SqlConnection connection,
             Dictionary<string, JsonElement> credentials,
             string userId,
@@ -188,12 +234,12 @@ namespace OmniSightAPI.Endpoints
                 var incomingKey = credentialPair.Key; // key from the frontend request
                 var credValue = credentialPair.Value;
 
-                Console.WriteLine($"🔐 Processing credential (incoming key): {incomingKey}");
+                _logger.Debug("Processing credential. IncomingKey: {IncomingKey}", incomingKey);
 
                 var credentialData = CredentialHelpers.ParseCredentialData(credValue);
                 if (credentialData == null)
                 {
-                    Console.WriteLine($"⚠️ Failed to parse credential '{incomingKey}', skipping");
+                    _logger.Warning("Failed to parse credential. IncomingKey: {IncomingKey}, skipping", incomingKey);
                     continue;
                 }
 
@@ -233,11 +279,12 @@ namespace OmniSightAPI.Endpoints
                             CredentialData = JsonSerializer.Serialize(encryptedCredentialData)
                         });
 
-                    Console.WriteLine($"✅ Credential saved to database (encrypted): {credentialId} (name: {credentialName})");
+                    _logger.Information("Credential saved to database (encrypted). CredentialId: {CredentialId}, Name: {CredentialName}",
+                        credentialId, credentialName);
                 }
                 catch (Exception dbEx)
                 {
-                    Console.WriteLine($"❌ Failed to insert credential row for {credentialName}: {dbEx.Message}");
+                    _logger.Error(dbEx, "Failed to insert credential row. CredentialName: {CredentialName}", credentialName);
                     // Skip creating in n8n if DB fails
                     continue;
                 }
@@ -245,8 +292,8 @@ namespace OmniSightAPI.Endpoints
                 // Try to create credential in n8n using normalized plaintext values
                 try
                 {
-                    Console.WriteLine($"📤 Creating n8n credential (type: {incomingKey}, name: {credentialName}) with payload:");
-                    Console.WriteLine(JsonSerializer.Serialize(normalizedCredentialData));
+                    _logger.Debug("Creating n8n credential. Type: {IncomingKey}, Name: {CredentialName}",
+                        incomingKey, credentialName);
 
                     var n8nCredentialId = await n8nService.CreateCredentialAsync(
                         incomingKey,
@@ -299,17 +346,17 @@ namespace OmniSightAPI.Endpoints
                             }
                         }
 
-                        Console.WriteLine($"✅ Credential created in n8n with ID: {n8nCredentialId} (mapped to keys: {string.Join(", ", keysToMap)})");
+                        _logger.Information("Credential created in n8n. CredentialId: {N8nCredentialId}, MappedKeys: {MappedKeys}",
+                            n8nCredentialId, string.Join(", ", keysToMap));
                     }
                     else
                     {
-                        Console.WriteLine($"❌ n8nService returned no ID for credential '{credentialName}'");
+                        _logger.Warning("n8nService returned no ID for credential. CredentialName: {CredentialName}", credentialName);
                     }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"❌ Exception creating credential in n8n for '{credentialName}': {ex.Message}");
-                    Console.WriteLine(ex.StackTrace);
+                    _logger.Error(ex, "Exception creating credential in n8n. CredentialName: {CredentialName}", credentialName);
                 }
             }
 
@@ -352,11 +399,11 @@ namespace OmniSightAPI.Endpoints
                     try
                     {
                         encryptedData[kvp.Key] = encryptionService.Encrypt(kvp.Value);
-                        Console.WriteLine($"🔒 Encrypted field: {kvp.Key}");
+                        _logger.Debug("Encrypted sensitive field. FieldName: {FieldName}", kvp.Key);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"❌ Encryption failed for field {kvp.Key}: {ex.Message}");
+                        _logger.Warning(ex, "Encryption failed for field. FieldName: {FieldName}, using unencrypted value", kvp.Key);
                         encryptedData[kvp.Key] = kvp.Value;
                     }
                 }
@@ -369,7 +416,7 @@ namespace OmniSightAPI.Endpoints
             return encryptedData;
         }
 
-        private static async Task SaveWorkflowToDatabase(
+        private static async Task SaveWorkflowToDatabaseAsync(
             SqlConnection connection,
             string workflowId,
             string userId,
@@ -425,7 +472,7 @@ namespace OmniSightAPI.Endpoints
                 });
         }
 
-        private static async Task<long?> ExecuteWorkflow(
+        private static async Task<long?> ExecuteWorkflowAsync(
             SqlConnection connection,
             string n8nWorkflowId,
             string workflowId,
@@ -437,21 +484,25 @@ namespace OmniSightAPI.Endpoints
         {
             try
             {
-                Console.WriteLine($"⏳ Waiting 2 seconds for workflow to be ready...");
-                await Task.Delay(2000);
+                _logger.Debug("Waiting for workflow to be ready before execution. WorkflowId: {WorkflowId}", workflowId);
+                await Task.Delay(2000, CancellationToken.None);
 
-                Console.WriteLine($"🎯 === STARTING WORKFLOW EXECUTION ===");
+                _logger.Information("Starting workflow execution. WorkflowId: {WorkflowId}, N8nWorkflowId: {N8nWorkflowId}",
+                    workflowId, n8nWorkflowId);
 
                 var triggerType = WorkflowHelpers.DetectWorkflowTriggerType(workflowData);
-                Console.WriteLine($"🎯 Trigger type detected: {triggerType}");
+                _logger.Debug("Trigger type detected. WorkflowId: {WorkflowId}, TriggerType: {TriggerType}",
+                    workflowId, triggerType);
 
-                if (workflowName.Contains("BitCoin") || workflowName.Contains("Bitcoin"))
+                if (workflowName.Contains("BitCoin", StringComparison.OrdinalIgnoreCase) || 
+                    workflowName.Contains("Bitcoin", StringComparison.OrdinalIgnoreCase))
                 {
-                    Console.WriteLine($"💡 TEMPORARY OVERRIDE: Forcing webhook execution for Bitcoin workflow");
+                    _logger.Information("Temporary override: Forcing webhook execution for Bitcoin workflow. WorkflowId: {WorkflowId}",
+                        workflowId);
                     triggerType = "webhook";
                 }
 
-                string n8nExecutionId = await workflowService.ExecuteWorkflowAsync(
+                var n8nExecutionId = await workflowService.ExecuteWorkflowAsync(
                     n8nWorkflowId,
                     triggerType,
                     workflowData,
@@ -460,9 +511,10 @@ namespace OmniSightAPI.Endpoints
 
                 if (!string.IsNullOrEmpty(n8nExecutionId))
                 {
-                    Console.WriteLine($"✅ Execution ID obtained: {n8nExecutionId}");
+                    _logger.Information("Execution ID obtained. WorkflowId: {WorkflowId}, N8nExecutionId: {N8nExecutionId}",
+                        workflowId, n8nExecutionId);
 
-                    var executionId = await RecordExecution(
+                    var executionId = await RecordExecutionAsync(
                         connection,
                         n8nExecutionId,
                         workflowId,
@@ -470,14 +522,15 @@ namespace OmniSightAPI.Endpoints
                         "running"
                     );
 
-                    Console.WriteLine($"✅ Execution recorded in database with ID: {executionId}");
+                    _logger.Information("Execution recorded in database. WorkflowId: {WorkflowId}, ExecutionId: {ExecutionId}",
+                        workflowId, executionId);
                     return executionId;
                 }
                 else
                 {
-                    Console.WriteLine($"❌ No execution ID returned from workflow service");
+                    _logger.Warning("No execution ID returned from workflow service. WorkflowId: {WorkflowId}", workflowId);
 
-                    var fallbackExecutionId = await RecordExecution(
+                    var fallbackExecutionId = await RecordExecutionAsync(
                         connection,
                         "unknown",
                         workflowId,
@@ -485,36 +538,37 @@ namespace OmniSightAPI.Endpoints
                         "unknown"
                     );
 
-                    Console.WriteLine($"⚠️ Created fallback execution record with ID: {fallbackExecutionId}");
+                    _logger.Warning("Created fallback execution record. WorkflowId: {WorkflowId}, ExecutionId: {ExecutionId}",
+                        workflowId, fallbackExecutionId);
                     return fallbackExecutionId;
                 }
             }
             catch (Exception execEx)
             {
-                Console.WriteLine($"❌ EXCEPTION during execution: {execEx.Message}");
-                Console.WriteLine($"Stack: {execEx.StackTrace}");
+                _logger.Error(execEx, "Exception during workflow execution. WorkflowId: {WorkflowId}", workflowId);
 
                 try
                 {
-                    var errorExecutionId = await RecordExecution(
+                    var errorExecutionId = await RecordExecutionAsync(
                         connection,
                         "error",
                         workflowId,
                         userId,
                         "error"
                     );
-                    Console.WriteLine($"⚠️ Recorded error execution with ID: {errorExecutionId}");
+                    _logger.Warning("Recorded error execution. WorkflowId: {WorkflowId}, ExecutionId: {ExecutionId}",
+                        workflowId, errorExecutionId);
                 }
                 catch (Exception recordEx)
                 {
-                    Console.WriteLine($"❌ Failed to record error execution: {recordEx.Message}");
+                    _logger.Error(recordEx, "Failed to record error execution. WorkflowId: {WorkflowId}", workflowId);
                 }
 
                 return null;
             }
         }
 
-        private static async Task<long> RecordExecution(
+        private static async Task<long> RecordExecutionAsync(
             SqlConnection connection,
             string n8nExecutionId,
             string workflowId,
@@ -524,12 +578,14 @@ namespace OmniSightAPI.Endpoints
             long executionId;
             if (long.TryParse(n8nExecutionId, out executionId))
             {
-                Console.WriteLine($"✅ Using n8n execution ID: {executionId}");
+                _logger.Debug("Using n8n execution ID. WorkflowId: {WorkflowId}, ExecutionId: {ExecutionId}",
+                    workflowId, executionId);
             }
             else
             {
                 executionId = (DateTime.UtcNow.Ticks % 1000000000000L) * 10000 + new Random().Next(1000, 9999);
-                Console.WriteLine($"⚠️ Generated fallback execution ID: {executionId}");
+                _logger.Warning("Generated fallback execution ID. WorkflowId: {WorkflowId}, ExecutionId: {ExecutionId}",
+                    workflowId, executionId);
             }
 
             await connection.ExecuteAsync(@"

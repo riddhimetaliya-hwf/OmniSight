@@ -1,5 +1,6 @@
 ﻿using System.Security.Cryptography;
 using System.Text;
+using Serilog;
 
 namespace OmniSightAPI.Services
 {
@@ -12,8 +13,9 @@ namespace OmniSightAPI.Services
     public class EncryptionService : IEncryptionService
     {
         private readonly string _encryptionKey;
+        private readonly ILogger _logger;
 
-        public EncryptionService(IConfiguration configuration)
+        public EncryptionService(IConfiguration configuration, ILogger logger)
         {
             _encryptionKey = configuration["Encryption:Key"]
                 ?? throw new InvalidOperationException("Encryption key not configured in appsettings.json");
@@ -22,6 +24,8 @@ namespace OmniSightAPI.Services
             {
                 throw new InvalidOperationException("Encryption key must be exactly 32 characters long for AES-256");
             }
+
+            _logger = logger;
         }
 
         public string Encrypt(string plainText)
@@ -56,7 +60,7 @@ namespace OmniSightAPI.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Encryption error: {ex.Message}");
+                _logger.Error(ex, "Encryption error occurred");
                 throw new InvalidOperationException("Failed to encrypt data", ex);
             }
         }
@@ -89,7 +93,7 @@ namespace OmniSightAPI.Services
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Decryption error: {ex.Message}");
+                _logger.Error(ex, "Decryption error occurred");
                 throw new InvalidOperationException("Failed to decrypt data", ex);
             }
         }

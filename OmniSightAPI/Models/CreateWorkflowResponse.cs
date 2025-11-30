@@ -1,4 +1,5 @@
 ﻿namespace OmniSightAPI.Models;
+
 public class CreateWorkflowResponse
 {
     public string WorkflowName { get; set; } = string.Empty;
@@ -6,4 +7,6 @@ public class CreateWorkflowResponse
     public string Status { get; set; } = string.Empty;
     public string? ExecutionId { get; set; }
     public DateTime CreatedAt { get; set; }
+    public List<string>? Errors { get; set; }
+    public List<string>? Warnings { get; set; }
 }

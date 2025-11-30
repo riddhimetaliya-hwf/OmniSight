@@ -1,49 +1,51 @@
 ﻿using System.Text.Json;
+using Serilog;
 
 namespace OmniSightAPI.Helpers
 {
     public static class CredentialHelpers
     {
-        public static Dictionary<string, string> ParseCredentialData(JsonElement credValue)
+        private static readonly ILogger _logger = Log.ForContext(typeof(CredentialHelpers));
+
+        public static Dictionary<string, string>? ParseCredentialData(JsonElement credValue)
         {
             try
             {
-                Console.WriteLine($"📦 Credential JSON: {credValue.GetRawText()}");
+                _logger.Debug("Parsing credential data. ValueKind: {ValueKind}", credValue.ValueKind);
 
                 if (credValue.ValueKind == JsonValueKind.Object)
                 {
                     var credentialData = new Dictionary<string, string>();
                     foreach (var prop in credValue.EnumerateObject())
                     {
-                        string propValue = prop.Value.ValueKind switch
+                        var propValue = prop.Value.ValueKind switch
                         {
                             JsonValueKind.Number => prop.Value.GetInt32().ToString(),
-                            JsonValueKind.True or JsonValueKind.False => prop.Value.GetBoolean().ToString().ToLower(),
-                            _ => prop.Value.GetString() ?? ""
+                            JsonValueKind.True or JsonValueKind.False => prop.Value.GetBoolean().ToString().ToLowerInvariant(),
+                            _ => prop.Value.GetString() ?? string.Empty
                         };
 
                         credentialData[prop.Name] = propValue;
                     }
-                    Console.WriteLine($"✅ Parsed structured credential with {credentialData.Count} fields");
+                    _logger.Debug("Parsed structured credential. FieldCount: {FieldCount}", credentialData.Count);
                     return credentialData;
                 }
-                else if (credValue.ValueKind == JsonValueKind.String)
+                
+                if (credValue.ValueKind == JsonValueKind.String)
                 {
-                    Console.WriteLine($"✅ Parsed simple string credential");
+                    _logger.Debug("Parsed simple string credential");
                     return new Dictionary<string, string>
                     {
-                        ["value"] = credValue.GetString() ?? ""
+                        ["value"] = credValue.GetString() ?? string.Empty
                     };
                 }
-                else
-                {
-                    Console.WriteLine($"⚠️ Unknown credential value kind: {credValue.ValueKind}");
-                    return null;
-                }
+
+                _logger.Warning("Unknown credential value kind. ValueKind: {ValueKind}", credValue.ValueKind);
+                return null;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error parsing credential data: {ex.Message}");
+                _logger.Error(ex, "Error parsing credential data");
                 return null;
             }
         }

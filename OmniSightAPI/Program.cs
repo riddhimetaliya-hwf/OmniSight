@@ -1,9 +1,20 @@
-﻿using Microsoft.OpenApi.Models;
+﻿using FluentValidation;
+using Microsoft.OpenApi.Models;
 using OmniSightAPI.Endpoints;
 using OmniSightAPI.EndPoints;
-using OmniSightAPI.Services;
+using OmniSightAPI.Extensions;
+using Serilog;
+
+// Configure Serilog
+Log.Logger = new LoggerConfiguration()
+    .WriteTo.Console()
+    .WriteTo.File("logs/omnisight-.txt", rollingInterval: RollingInterval.Day)
+    .CreateLogger();
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Use Serilog for logging
+builder.Host.UseSerilog();
 
 try
 {
@@ -11,7 +22,7 @@ try
 }
 catch (Exception ex)
 {
-    Console.WriteLine($"Warning: Could not load appsettings.json: {ex.Message}");
+    Log.Warning(ex, "Could not load appsettings.json");
 }
 
 // Add services
@@ -49,33 +60,10 @@ builder.Services.AddCors(options =>
     });
 });
 
-// Register services
-builder.Services.AddScoped<IN8nService, N8nService>();
-builder.Services.AddScoped<IWorkflowService, WorkflowService>();
-builder.Services.AddScoped<IEncryptionService, EncryptionService>();
-builder.Services.AddScoped<NodeMetadataService>();
-
-// Configure n8n HttpClient
-builder.Services.AddHttpClient("n8n", client =>
-{
-    var n8nConfig = builder.Configuration.GetSection("N8n");
-    var baseUrl = n8nConfig["BaseUrl"] ?? "http://localhost:5678";
-    var apiKey = n8nConfig["ApiKey"];
-    var timeout = n8nConfig.GetValue<int>("TimeoutSeconds", 30);
-
-    client.BaseAddress = new Uri(baseUrl);
-    client.Timeout = TimeSpan.FromSeconds(timeout);
-
-    if (!string.IsNullOrEmpty(apiKey))
-    {
-        client.DefaultRequestHeaders.Add("X-N8N-API-KEY", apiKey);
-        Console.WriteLine($"✅ n8n API key configured");
-    }
-    else
-    {
-        Console.WriteLine($"⚠️ n8n API key not found");
-    }
-});
+// Register application services, validation, and HTTP clients
+builder.Services.AddApplicationServices();
+builder.Services.AddValidation();
+builder.Services.AddN8nHttpClient(builder.Configuration);
 
 var app = builder.Build();
 
@@ -97,9 +85,21 @@ app.MapWorkflowTemplateEndpoints();
 app.MapWorkflowEndpoints();
 app.MapOverviewEndpoints();
 app.MapNodeMetadataEndpoints();
+app.MapCredentialEndpoints();
 
-Console.WriteLine("🚀 OmniSight API Starting...");
-Console.WriteLine($"📍 Environment: {app.Environment.EnvironmentName}");
-Console.WriteLine($"🌐 CORS Policy: {(app.Environment.IsDevelopment() ? "Development (with credentials)" : "AllowAll")}");
+Log.Information("🚀 OmniSight API Starting...");
+Log.Information("📍 Environment: {Environment}", app.Environment.EnvironmentName);
+Log.Information("🌐 CORS Policy: {Policy}", app.Environment.IsDevelopment() ? "Development (with credentials)" : "AllowAll");
 
-app.Run();
+try
+{
+    app.Run();
+}
+catch (Exception ex)
+{
+    Log.Fatal(ex, "Application terminated unexpectedly");
+}
+finally
+{
+    Log.CloseAndFlush();
+}

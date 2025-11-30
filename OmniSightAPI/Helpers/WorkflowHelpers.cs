@@ -1,10 +1,13 @@
 ﻿using System.Text.Json;
 using System.Text.RegularExpressions;
+using Serilog;
 
 namespace OmniSightAPI.Helpers
 {
     public static class WorkflowHelpers
     {
+        private static readonly ILogger _logger = Log.ForContext(typeof(WorkflowHelpers));
+
         public static Dictionary<string, object> CreateWorkflowFromTemplate(
             JsonElement template,
             Dictionary<string, string> credentialMappings,
@@ -14,8 +17,11 @@ namespace OmniSightAPI.Helpers
         {
             var workflow = new Dictionary<string, object>();
 
-            Console.WriteLine($"🔧 Creating workflow from template");
-            Console.WriteLine($"🔧 Credential mappings: {string.Join(", ", credentialMappings.Select(kv => $"{kv.Key}={kv.Value}"))}");
+            _logger.Debug("Creating workflow from template. TemplateId: {TemplateId}, CustomName: {CustomName}",
+                templateId, customName);
+            _logger.Debug("Credential mappings ({Count}): {Mappings}",
+                credentialMappings.Count,
+                string.Join(", ", credentialMappings.Select(kv => $"{kv.Key}={kv.Value}")));
 
             if (template.TryGetProperty("name", out var nameProp))
                 workflow["name"] = customName ?? $"{nameProp.GetString()} - Copy";
@@ -67,7 +73,7 @@ namespace OmniSightAPI.Helpers
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ Error detecting trigger type: {ex.Message}");
+                _logger.Warning(ex, "Error detecting trigger type, defaulting to manual");
                 return "manual";
             }
         }
@@ -133,6 +139,11 @@ namespace OmniSightAPI.Helpers
                         var credKey = credEntry.Name; // e.g. "smtp", "gmailOAuth2"
                         var credValue = credEntry.Value;
 
+                        _logger.Debug("Processing credential for node. NodeName: {NodeName}, CredKey: {CredKey}",
+                            nodeName, credKey);
+                        _logger.Debug("Available credential mappings ({Count}): {Mappings}",
+                            credentialMappings.Count, string.Join(", ", credentialMappings.Keys));
+
                         string resolvedN8nId = null;
                         string friendlyName = credKey;
 
@@ -155,7 +166,7 @@ namespace OmniSightAPI.Helpers
                                 {
                                     resolvedN8nId = mapDirect;
                                 }
-                                else if (credentialMappings.TryGetValue(credentialKey, out var mapByKey))
+                                else if (credentialMappings.TryGetValue(credKey, out var mapByKey))
                                 {
                                     resolvedN8nId = mapByKey;
                                 }
@@ -166,7 +177,7 @@ namespace OmniSightAPI.Helpers
                                 else
                                 {
                                     // fallback: try normalized forms
-                                    var normCandidates = GenerateCredentialLookupCandidates(idValue, credentialKey, nameValue);
+                                    var normCandidates = GenerateCredentialLookupCandidates(idValue, credKey, nameValue);
                                     resolvedN8nId = FindFirstMappingMatch(normCandidates, credentialMappings);
                                 }
                             }
@@ -204,13 +215,16 @@ namespace OmniSightAPI.Helpers
                                 ["name"] = friendlyName
                             };
 
-                            Console.WriteLine($"🔁 Node '{nodeName}': mapped credential key '{credKey}' -> n8n id '{resolvedN8nId}'");
+                            _logger.Information("Successfully mapped credential for node. NodeName: {NodeName}, CredKey: {CredKey}, N8nId: {ResolvedN8nId}",
+                                nodeName, credKey, resolvedN8nId);
                         }
                         else
                         {
                             // leave original value (so nothing breaks), but log warning
-                            Console.WriteLine($"⚠️ Node '{nodeName}': could not map credential for key '{credKey}' (value: {credEntry.Value.GetRawText()})");
-                            updatedCreds[credKey] = credEntry.Value;
+                            _logger.Warning("Failed to map credential for node. NodeName: {NodeName}, CredKey: {CredKey}, Value: {Value}, AvailableKeys: {AvailableKeys}",
+                                nodeName, credKey, credEntry.Value.GetRawText(), string.Join(", ", credentialMappings.Keys));
+                            // Keep original value to preserve workflow structure, but it won't work without proper mapping
+                            updatedCreds[credKey] = ConvertJsonElementToObject(credEntry.Value);
                         }
                     }
 
