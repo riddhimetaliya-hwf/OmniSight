@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import apiClient, { API_ENDPOINTS } from "@/services/api";
 
 interface N8NIframeBuilderProps {
   workflowId: string;
@@ -30,52 +31,54 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
     try {
       setIsLoading(true);
       setN8nError(null);
-      
-      console.log('🔐 Fetching JWT token from .NET backend...');
-      
-      const response = await fetch('https://localhost:7104/api/n8nauth/auth-token', {
-        method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        credentials: 'include',
-      });
-      
-      console.log('📡 Response status:', response.status, response.statusText);
 
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('❌ HTTP error response:', {
+      console.log("🔐 Fetching JWT token from .NET backend...");
+
+      const response = await apiClient.get<{ token: string }>(
+        API_ENDPOINTS.N8N_AUTH.AUTH_TOKEN,
+        { credentials: "include" }
+      );
+
+      console.log("📡 Response status:", response.status);
+
+      if (!response.success || !response.data) {
+        console.error("❌ HTTP error response:", {
           status: response.status,
-          statusText: response.statusText,
-          body: errorText
+          error: response.error,
         });
-        throw new Error(`HTTP error! status: ${response.status} - ${response.statusText}`);
+        throw new Error(
+          response.error || `HTTP error! status: ${response.status}`
+        );
       }
 
-      const data = await response.json();
-      console.log('✅ Auth API response received:', data);
-      
+      const data = response.data;
+      console.log("✅ Auth API response received:", data);
+
       if (data.token) {
         setAuthToken(data.token);
-        console.log('✅ n8n initialized successfully with token');
-        
+        console.log("✅ n8n initialized successfully with token");
+
         // Load existing workflow data if editing
         if (workflowId && workflowId !== "new") {
           await loadWorkflowData();
         }
       } else {
-        console.error('❌ Missing token in response:', {
+        console.error("❌ Missing token in response:", {
           availableKeys: Object.keys(data),
-          tokenPresent: !!data.token
+          tokenPresent: !!data.token,
         });
-        throw new Error(`No token in response. Available keys: ${Object.keys(data).join(', ')}`);
+        throw new Error(
+          `No token in response. Available keys: ${Object.keys(data).join(
+            ", "
+          )}`
+        );
       }
     } catch (error) {
-      console.error('❌ Failed to initialize n8n:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      console.error("❌ Failed to initialize n8n:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
       setN8nError(errorMessage);
-      toast.error('Failed to load workflow editor', {
+      toast.error("Failed to load workflow editor", {
         description: errorMessage,
       });
     } finally {
@@ -86,31 +89,35 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
   // Load workflow data from backend
   const loadWorkflowData = async () => {
     try {
-      const response = await fetch(
-        `https://localhost:7104/api/n8nauth/workflow/${workflowId}`,
-        {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          credentials: 'include',
-        }
+      const response = await apiClient.get(
+        API_ENDPOINTS.N8N_AUTH.WORKFLOW(workflowId),
+        { credentials: "include" }
       );
 
-      if (response.ok) {
-        const result = await response.json();
+      if (response.success && response.data) {
+        const result = response.data;
         if (result.success && result.data) {
           const workflowData = result.data;
-          setWorkflowName(workflowData.WorkflowName || workflowData.workflowName || "New Workflow");
-          setWorkflowDescription(workflowData.WorkflowDescription || workflowData.workflowDescription || "");
+          setWorkflowName(
+            workflowData.WorkflowName ||
+              workflowData.workflowName ||
+              "New Workflow"
+          );
+          setWorkflowDescription(
+            workflowData.WorkflowDescription ||
+              workflowData.workflowDescription ||
+              ""
+          );
           setIsActive(workflowData.Status === "active");
-          setN8nWorkflowId(workflowData.N8nWorkflowId || workflowData.n8nWorkflowId || "");
+          setN8nWorkflowId(
+            workflowData.N8nWorkflowId || workflowData.n8nWorkflowId || ""
+          );
         }
       } else {
-        console.warn('Workflow not found or error loading workflow data');
+        console.warn("Workflow not found or error loading workflow data");
       }
     } catch (error) {
-      console.error('Failed to load workflow data:', error);
+      console.error("Failed to load workflow data:", error);
     }
   };
 
@@ -120,27 +127,29 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
 
   // Construct URL for EMBEDDED n8n editor
   const getN8nEditorUrl = () => {
-    if (!authToken) return '';
-    
-    const baseUrl = import.meta.env?.VITE_N8N_URL || 'http://localhost:5678';
-    
-    let workflowIdToLoad = 'new';
+    if (!authToken) return "";
+
+    const baseUrl = import.meta.env?.VITE_N8N_URL || "http://localhost:5678";
+
+    let workflowIdToLoad = "new";
     if (n8nWorkflowId) {
       workflowIdToLoad = n8nWorkflowId;
     }
-    
+
     // Use embedded/headless mode parameters
-    const editorUrl = `${baseUrl}/workflow/${workflowIdToLoad}?token=${encodeURIComponent(authToken)}&embed=true&headless=true&hideUi=true`;
-    console.log('🔗 Generated embedded editor URL:', editorUrl);
+    const editorUrl = `${baseUrl}/workflow/${workflowIdToLoad}?token=${encodeURIComponent(
+      authToken
+    )}&embed=true&headless=true&hideUi=true`;
+    console.log("🔗 Generated embedded editor URL:", editorUrl);
     return editorUrl;
   };
 
   // Force hide ALL n8n UI elements
   const forceHideN8nUI = () => {
     if (!iframeRef.current?.contentDocument) return;
-    
+
     // Method 1: Inject CSS to hide everything except canvas
-    const style = iframeRef.current.contentDocument.createElement('style');
+    const style = iframeRef.current.contentDocument.createElement("style");
     style.textContent = `
       /* HIDE EVERYTHING except the editor canvas and node creator */
       body > *:not(#app) {
@@ -187,15 +196,16 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
         z-index: 10000 !important;
       }
     `;
-    
+
     iframeRef.current.contentDocument.head.appendChild(style);
-    
+
     // Method 2: Remove elements directly from DOM
     setTimeout(() => {
-      const elementsToRemove = iframeRef.current?.contentDocument?.querySelectorAll(
-        'header, .header, .main-header, .sidebar, .navigation, nav, .main-sidebar'
-      );
-      elementsToRemove?.forEach(el => {
+      const elementsToRemove =
+        iframeRef.current?.contentDocument?.querySelectorAll(
+          "header, .header, .main-header, .sidebar, .navigation, nav, .main-sidebar"
+        );
+      elementsToRemove?.forEach((el) => {
         el.remove();
       });
     }, 500);
@@ -203,7 +213,7 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
 
   const handleSave = async () => {
     if (!workflowName.trim()) {
-      toast.error('Workflow name is required');
+      toast.error("Workflow name is required");
       return;
     }
 
@@ -212,40 +222,40 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
       const workflowData = {
         name: workflowName,
         description: workflowDescription,
-        status: isActive ? "active" : "inactive"
+        status: isActive ? "active" : "inactive",
       };
 
       let response;
       if (workflowId === "new" || !workflowId) {
         // Create new workflow
-        response = await fetch('https://localhost:7104/api/n8nauth/create-workflow', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(workflowData),
-          credentials: 'include',
-        });
+        response = await apiClient.post(
+          API_ENDPOINTS.N8N_AUTH.CREATE_WORKFLOW,
+          workflowData,
+          { credentials: "include" }
+        );
       } else {
         // Update existing workflow
-        response = await fetch(`https://localhost:7104/api/n8nauth/workflow/${workflowId}`, {
-          method: 'PUT',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify(workflowData),
-          credentials: 'include',
-        });
+        response = await apiClient.put(
+          API_ENDPOINTS.N8N_AUTH.WORKFLOW(workflowId),
+          workflowData,
+          { credentials: "include" }
+        );
       }
 
-      if (response.ok) {
-        const result = await response.json();
-        
-        if (result.success) {
+      if (response.success && response.data) {
+        const result = response.data as {
+          success?: boolean;
+          error?: string;
+          data?: {
+            n8nWorkflowId?: string;
+          };
+        };
+
+        if (result.success !== false) {
           if (result.data?.n8nWorkflowId) {
             setN8nWorkflowId(result.data.n8nWorkflowId);
           }
-          
+
           toast.success("Workflow saved successfully!", {
             description: "Your workflow has been saved to the database.",
           });
@@ -255,13 +265,12 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
           throw new Error(result.error || "Failed to save workflow");
         }
       } else {
-        const error = await response.json();
-        throw new Error(error.error || "Failed to save workflow");
+        throw new Error(response.error || "Failed to save workflow");
       }
     } catch (error: unknown) {
-      console.error('Failed to save workflow:', error);
-      toast.error('Failed to save workflow', {
-        description: (error as Error).message || 'Please try again later.',
+      console.error("Failed to save workflow:", error);
+      toast.error("Failed to save workflow", {
+        description: (error as Error).message || "Please try again later.",
       });
     } finally {
       setIsSaving(false);
@@ -281,7 +290,9 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
       <div className="flex items-center justify-center h-screen">
         <div className="flex items-center space-x-2">
           <Loader2 className="w-6 h-6 animate-spin" />
-          <span className="text-muted-foreground">Loading workflow editor...</span>
+          <span className="text-muted-foreground">
+            Loading workflow editor...
+          </span>
         </div>
       </div>
     );
@@ -299,9 +310,9 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
               <RefreshCw className="w-4 h-4 mr-2" />
               Retry
             </Button>
-            <Button 
-              onClick={() => window.history.back()} 
-              variant="outline" 
+            <Button
+              onClick={() => window.history.back()}
+              variant="outline"
               className="w-full"
             >
               <X className="w-4 h-4 mr-2" />
@@ -320,9 +331,9 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
         <div className="flex-1 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex gap-2">
-              <Button 
-                onClick={() => window.history.back()} 
-                variant="outline" 
+              <Button
+                onClick={() => window.history.back()}
+                variant="outline"
                 size="sm"
               >
                 <X className="w-4 h-4 mr-2" />
@@ -363,22 +374,22 @@ export const N8NIframeBuilder: React.FC<N8NIframeBuilderProps> = ({
             allow="clipboard-read; clipboard-write"
             sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals allow-storage-access-by-user-activation"
             onLoad={() => {
-              console.log('✅ n8n editor loaded - forcing UI to hide');
-              toast.success('Editor Ready', {
-                description: 'Start building your workflow',
+              console.log("✅ n8n editor loaded - forcing UI to hide");
+              toast.success("Editor Ready", {
+                description: "Start building your workflow",
               });
-              
+
               // Force hide n8n UI repeatedly
               const hideInterval = setInterval(() => {
                 forceHideN8nUI();
               }, 1000);
-              
+
               // Stop after 10 seconds
               setTimeout(() => clearInterval(hideInterval), 10000);
             }}
             onError={(e) => {
-              console.error('❌ Failed to load n8n editor:', e);
-              toast.error('Failed to load editor');
+              console.error("❌ Failed to load n8n editor:", e);
+              toast.error("Failed to load editor");
             }}
           />
         ) : (

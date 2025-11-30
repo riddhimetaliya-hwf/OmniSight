@@ -65,7 +65,7 @@ interface OverviewData {
   logs: LogEntry[];
 }
 
-const API_BASE_URL = "https://localhost:7104/api";
+import apiClient, { API_ENDPOINTS } from "@/services/api";
 
 const Index = () => {
   const [activeTab, setActiveTab] = useState("history");
@@ -74,11 +74,11 @@ const Index = () => {
       activeWorkflows: 0,
       completedToday: 0,
       pendingTasks: 0,
-      alerts: 0
+      alerts: 0,
     },
     executions: [],
     activities: [],
-    logs: []
+    logs: [],
   });
   const [loading, setLoading] = useState(true);
 
@@ -86,16 +86,16 @@ const Index = () => {
   const fetchOverviewData = async () => {
     try {
       setLoading(true);
-      
-      const response = await fetch(`${API_BASE_URL}/overview/all`);
-      
-      if (response.ok) {
-        const data: OverviewData = await response.json();
-        setOverviewData(data);
+
+      const response = await apiClient.get<OverviewData>(
+        API_ENDPOINTS.OVERVIEW.ALL
+      );
+
+      if (response.success && response.data) {
+        setOverviewData(response.data);
         toast.success("Overview data loaded successfully");
       } else {
-        const errorText = await response.text();
-        console.error("❌ Failed to fetch overview data:", errorText);
+        console.error("❌ Failed to fetch overview data:", response.error);
         toast.error("Failed to load overview data");
       }
     } catch (error) {
@@ -108,7 +108,7 @@ const Index = () => {
 
   useEffect(() => {
     fetchOverviewData();
-    
+
     // Auto-refresh every 30 seconds
     const interval = setInterval(fetchOverviewData, 30000);
     return () => clearInterval(interval);
@@ -117,9 +117,12 @@ const Index = () => {
   // Calculate execution stats for HistoryPanel
   const executionStats = {
     totalRuns: overviewData.executions.length,
-    successRuns: overviewData.executions.filter(e => e.status === "success").length,
-    failedRuns: overviewData.executions.filter(e => e.status === "failed").length,
-    runningRuns: overviewData.executions.filter(e => e.status === "running").length
+    successRuns: overviewData.executions.filter((e) => e.status === "success")
+      .length,
+    failedRuns: overviewData.executions.filter((e) => e.status === "failed")
+      .length,
+    runningRuns: overviewData.executions.filter((e) => e.status === "running")
+      .length,
   };
 
   // Stats cards data
@@ -142,11 +145,11 @@ const Index = () => {
       icon: Clock,
       color: "text-orange-600",
     },
-    { 
-      label: "Alerts", 
-      value: loading ? "..." : overviewData.stats.alerts.toString(), 
-      icon: AlertCircle, 
-      color: "text-red-600" 
+    {
+      label: "Alerts",
+      value: loading ? "..." : overviewData.stats.alerts.toString(),
+      icon: AlertCircle,
+      color: "text-red-600",
     },
   ];
 
@@ -200,21 +203,21 @@ const Index = () => {
           <CardContent className="pt-0">
             <div className="animate-in fade-in duration-300">
               {activeTab === "history" && (
-                <HistoryPanel 
+                <HistoryPanel
                   executions={overviewData.executions}
                   stats={executionStats}
                   loading={loading}
                 />
               )}
               {activeTab === "logs" && (
-                <LogsPanel 
+                <LogsPanel
                   logs={overviewData.logs}
                   loading={loading}
                   onRefresh={fetchOverviewData}
                 />
               )}
               {activeTab === "activity" && (
-                <ActivityPanel 
+                <ActivityPanel
                   activities={overviewData.activities}
                   loading={loading}
                 />
